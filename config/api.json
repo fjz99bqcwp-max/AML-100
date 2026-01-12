@@ -1,0 +1,28 @@
+
+{
+    "hyperliquid": {
+        "rest_url": "https://api.hyperliquid.xyz",
+        "info_url": "https://api.hyperliquid.xyz/info",
+        "ws_url": "wss://api.hyperliquid.xyz/ws",
+        "private_key_env": "HYPERLIQUID_API_SECRET",
+        "wallet_address_env": "HYPERLIQUID_WALLET_ADDRESS",
+        "timeout_seconds": 30,
+        "retry_attempts": 5,
+        "retry_delay_ms": 1000,
+        "rate_limit_per_minute": 15,
+        "websocket_ping_interval": 20
+    },
+    "symbol": "XYZ100",
+    "asset": "XYZ100-USDC",
+    "fallback_symbol": "BTC",
+    "use_websocket": true,
+    "orderbook_depth": 10,
+    "cache_ttl": {
+        "user_state": 10.0,
+        "positions": 10.0,
+        "orderbook": 3.0,
+        "open_orders": 10.0,
+        "user_fills": 30.0,
+        "mid_price": 3.0
+    }
+}
