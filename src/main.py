@@ -282,37 +282,43 @@ class AMLHFTSystem:
     async def run_backtest(
         self,
         days: int = 7,
-        save_results: bool = True
+        save_results: bool = True,
+        historical_data: Optional[pd.DataFrame] = None
     ) -> Dict[str, Any]:
         """
         Run vectorized backtest with current parameters
         Step 4: Enhanced with configurable slippage/latency simulation
+        
+        Args:
+            days: Number of days of data (ignored if historical_data provided)
+            save_results: Whether to save backtest results
+            historical_data: Pre-loaded DataFrame to use instead of fetching
         """
         self._ensure_setup()
         
         # Get backtest config (Step 4)
         backtest_cfg = self.params.get("backtest", {})
-        default_days = backtest_cfg.get("days", 90)
         slippage_pct = backtest_cfg.get("slippage_pct", 0.015) / 100  # Step 4: 0.015% slippage
         latency_min = backtest_cfg.get("latency_ms_min", 1)
         latency_max = backtest_cfg.get("latency_ms_max", 5)
         commission = backtest_cfg.get("commission_pct", 0.0005)
-        
-        # Use configured days if not specified
-        if days == 7:
-            days = default_days
         
         logger.info(f"📊 Starting backtest ({days} days, slippage={slippage_pct*100:.3f}%, latency={latency_min}-{latency_max}ms)...")
         self.state.mode = "backtest"
         
         start_time = time.time()
         
-        # Fetch historical data
-        df = await self._data_fetcher.get_training_data(
-            symbol=self.api_config["symbol"],
-            interval="1m",
-            days=days
-        )
+        # Use provided data or fetch from API
+        if historical_data is not None and not historical_data.empty:
+            logger.info(f"Using provided historical data ({len(historical_data)} rows)")
+            df = self._data_fetcher._add_technical_features(historical_data)
+        else:
+            # Fetch historical data
+            df = await self._data_fetcher.get_training_data(
+                symbol=self.api_config["symbol"],
+                interval="1m",
+                days=days
+            )
         
         if df.empty or len(df) < 500:
             logger.error(f"Insufficient data for backtest (got {len(df)} rows)")

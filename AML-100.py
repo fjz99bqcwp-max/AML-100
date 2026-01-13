@@ -228,21 +228,20 @@ async def run_backtest_only(days: int = 30, data_source: str = "xyz100") -> None
         log_phase(1, f"Backtest ({data_source.upper()} data)")
         
         # Get appropriate data based on source
+        historical_data = None
         if data_source == "us500":
             log_info("Using US500 fallback data for backtest")
-            # Use fallback data from data_fetcher
             historical_data = await system._data_fetcher.get_fallback_data(days)
         elif data_source == "synthetic":
             log_info(f"Generating synthetic US500 data ({days} days)")
             historical_data = system._data_fetcher.generate_synthetic_us500(days)
         elif data_source == "btc":
             log_info("Using BTC data for backtest")
-            historical_data = await system._data_fetcher.fetch_historical_klines("BTC", "1m", days * 24 * 60)
-        else:
-            # Default: xyz100
-            historical_data = None  # Let run_backtest fetch normally
+            historical_data = await system._data_fetcher.fetch_historical_klines("BTC", "1m", days)
+        # else: xyz100 - let run_backtest fetch normally
         
-        results = await system.run_backtest(days=days)
+        # Run backtest with provided data (if any)
+        results = await system.run_backtest(days=days, historical_data=historical_data)
         
         # Display results
         print()

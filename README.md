@@ -91,20 +91,19 @@ This system is specifically optimized for XYZ100 equity perpetuals:
 # Navigate to project directory
 cd /Users/nheosdisplay/VSC/AML/AML-100
 
-# Activate virtual environment and source environment
-source .venv/bin/activate && source .env
+# Activate virtual environment
+source .venv/bin/activate
 
 # Run with caffeinate to prevent sleep (full autonomous mode)
-caffeinate python scripts/launch.py
+caffeinate python AML-100.py
 
 # Or with specific options
-python scripts/launch.py --mode autonomous --capital 10000
-
-# Backtest only mode
-python scripts/launch.py --mode backtest
-
-# Training only mode
-python scripts/launch.py --mode train
+python AML-100.py --backtest --days 30           # Backtest only
+python AML-100.py --backtest --data us500        # Backtest with US500 data
+python AML-100.py --backtest --data synthetic    # Backtest with synthetic data
+python AML-100.py --hft                          # HFT mode (tighter TP/SL)
+python AML-100.py --train --epochs 50            # Training only
+python AML-100.py --optimize --trials 100        # Optimization only
 ```
 
 ## Project Structure

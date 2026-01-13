@@ -549,6 +549,8 @@ class DataFetcher:
             current_start = start_time
             week_ms = 7 * 86400 * 1000
             batch_num = 0
+            consecutive_failures = 0
+            max_consecutive_failures = 3  # Stop after 3 consecutive failures
             
             while current_start < end_time:
                 try:
@@ -565,8 +567,15 @@ class DataFetcher:
                     
                     if not klines:
                         logger.warning(f"Empty response for batch {batch_num}")
-                        break
+                        consecutive_failures += 1
+                        if consecutive_failures >= max_consecutive_failures:
+                            logger.error(f"Too many consecutive failures ({consecutive_failures}), aborting")
+                            break
+                        await asyncio.sleep(2)
+                        continue
                     
+                    # Reset failure counter on success
+                    consecutive_failures = 0
                     logger.info(f"Batch {batch_num} returned {len(klines)} klines")
                     all_klines.extend(klines)
                     
@@ -579,6 +588,10 @@ class DataFetcher:
                     
                 except Exception as e:
                     logger.error(f"Error fetching klines batch {batch_num}: {e}")
+                    consecutive_failures += 1
+                    if consecutive_failures >= max_consecutive_failures:
+                        logger.error(f"Too many consecutive failures ({consecutive_failures}), aborting fetch for {symbol}")
+                        break
                     await asyncio.sleep(5)
         
         logger.info(f"Total klines collected: {len(all_klines)}")
@@ -783,6 +796,21 @@ class DataFetcher:
         if df.empty:
             # Fetch fresh data from API
             df = await self.fetch_historical_klines(symbol, interval, days)
+        
+        # If primary symbol (XYZ100) data is insufficient, use fallback
+        if (df.empty or len(df) < 500) and symbol == self.PRIMARY_SYMBOL:
+            logger.warning(f"{symbol} data insufficient ({len(df)} rows) - trying US500/BTC fallback")
+            self._using_fallback = True
+            
+            # Try US500 first (better equity correlation)
+            fallback_df = await self.get_fallback_data(days)
+            if fallback_df is not None and len(fallback_df) >= 500:
+                logger.info(f"Using {self._fallback_type} fallback data ({len(fallback_df)} rows)")
+                df = fallback_df
+            else:
+                # Last resort: synthetic data
+                logger.warning("All fallbacks failed, generating synthetic US500 data")
+                df = self.generate_synthetic_us500(days)
         
         if df.empty:
             return df
