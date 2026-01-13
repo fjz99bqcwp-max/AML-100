@@ -1,250 +1,188 @@
-# AML-100: Machine Learning Autonomous HFT for XYZ100-USDC on Hyperliquid
+# AML-100: Autonomous ML Trading System for XYZ100-USDC
 
-A fully autonomous machine learning-based high-frequency trading system for **XYZ100-USDC equity perpetual futures** on Hyperliquid mainnet (HIP-3/XYZ deployment). Optimized for Apple Silicon M4 with Metal Performance Shaders (MPS) acceleration.
+A fully autonomous machine learning-based trading system for **XYZ100-USDC equity perpetual futures** on Hyperliquid mainnet. Optimized for Apple Silicon M4 with Metal Performance Shaders (MPS) acceleration.
+
+## Features
+
+- **Hybrid LSTM+DQN Model**: Deep reinforcement learning with temporal pattern recognition
+- **torch.compile() Optimization**: Sub-millisecond inference on M4 chips
+- **Bayesian Optimization**: Auto-tunes trading parameters
+- **Kelly Criterion Risk Management**: Optimal position sizing
+- **Async WebSocket Data**: Real-time market data processing
+- **Automatic Fallback**: Uses synthetic/SPX data when XYZ100 history is insufficient
 
 ## Trading Objectives
 
 | Metric | Target |
 |--------|--------|
 | Monthly Return | 10-30% |
-| Profit Factor | >= 1.2 |
-| Sharpe Ratio | >= 1.5 |
-| Max Drawdown | <= 5% |
-| Auto-Halt Threshold | 4% drawdown |
-| Latency Target | < 1ms inference |
-
-## XYZ100-USDC Specific Features
-
-This system is specifically optimized for XYZ100 equity perpetuals:
-
-- **Equity Volatility Features**: Enhanced feature engineering for equity-linked perps
-- **Implied Volatility Proxy**: Estimates IV from price range data
-- **Gap Detection**: Identifies and trades session gaps
-- **Mean Reversion Signals**: Tuned for equity market dynamics
-- **24/7 Oracle Support**: Leverages Hyperliquid's continuous pricing model
-- **BTC Fallback**: Automatic fallback to BTC data when XYZ100 history is insufficient
-
-### XYZ100 vs BTC: Key Differences
-
-| Feature | XYZ100-USDC | BTC-USDC |
-|---------|-------------|----------|
-| Volatility | Higher (equity) | Moderate (crypto) |
-| Session Gaps | Possible | Rare |
-| Mean Reversion | Stronger | Weaker |
-| TP/SL Settings | 4.0%/1.5% | 2.3%/0.8% |
-| Position Size | 30% | 40% |
-| Max Leverage | 20x (capped) | 50x |
-
-## Architecture Overview
-
-### Core Components
-
-- **Hybrid LSTM+DQN Model**: Enhanced with equity-specific features for temporal pattern recognition
-- **Bayesian Optimization**: Auto-tunes trading parameters with wider ranges for equity volatility
-- **Kelly Criterion Risk Management**: Optimal position sizing with volatility scaling
-- **Async WebSocket Data**: Real-time market data with sub-millisecond processing
-- **BTC Fallback System**: Automatic fallback when XYZ100 history < 5000 records
+| Profit Factor | ≥ 1.2 |
+| Sharpe Ratio | ≥ 1.5 |
+| Max Drawdown | ≤ 5% |
+| Auto-Halt | 4% drawdown |
+| Inference Latency | < 1ms |
 
 ## Quick Start
 
 ### Prerequisites
 
-- Python 3.12+
-- macOS with Apple Silicon M4 (recommended) or any Unix-like system
-- Hyperliquid account with API keys
-- Access to XYZ100-USDC on HIP-3 deployment
+- Python 3.9+
+- macOS with Apple Silicon (M1/M2/M3/M4) recommended
+- Hyperliquid account with API credentials
 
 ### Installation
 
-1. **Navigate to AML-100 directory**
-   ```bash
-   cd /Users/nheosdisplay/VSC/AML/AML-100
-   ```
-
-2. **Create and activate virtual environment**
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   ```
-
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Set environment variables**
-   Create a `.env` file in the project root:
-   ```
-   HYPERLIQUID_API_KEY=your_api_key_here
-   HYPERLIQUID_API_SECRET=your_api_secret_here
-   HYPERLIQUID_WALLET_ADDRESS=your_wallet_address_here
-   ```
-
-5. **Configure initial capital** (optional)
-   ```bash
-   export AML_INITIAL_CAPITAL=10000  # Default: $10,000
-   ```
-
-### Launch
-
 ```bash
-# Navigate to project directory
-cd /Users/nheosdisplay/VSC/AML/AML-100
+# Clone and navigate to project
+cd /path/to/AML-100
 
-# Activate virtual environment
+# Create virtual environment
+python3 -m venv .venv
 source .venv/bin/activate
 
-# Run with caffeinate to prevent sleep (full autonomous mode)
+# Install dependencies
+pip install -r requirements.txt
+
+# Configure environment
+cp .env.example .env
+# Edit .env with your Hyperliquid credentials
+```
+
+### Usage
+
+```bash
+# Activate environment
+source .venv/bin/activate
+
+# Full autonomous mode (prevents sleep on macOS)
 caffeinate python AML-100.py
 
-# Or with specific options
-python AML-100.py --backtest --days 180          # Backtest only (180-day)
-python AML-100.py --backtest --data hybrid --days 180  # Hybrid real+synthetic
-python AML-100.py --backtest --data spx          # Backtest with SPX data
-python AML-100.py --backtest --data synthetic    # Backtest with synthetic data
-python AML-100.py --hft                          # HFT mode (tighter TP/SL)
-python AML-100.py --train --epochs 50            # Training only
-python AML-100.py --optimize --trials 100        # Optimization only
-python AML-100.py --live --paper                 # Paper trading (live data, fake execution)
+# Training only
+python AML-100.py --train --epochs 100 --days 30
 
-# Advanced: Ultra-HFT mode (micro-scalping)
-cp config/params_ultra_hft.json config/params.json
-python AML-100.py --backtest --data hybrid --days 180
+# Backtest with hybrid data (70% real + 30% synthetic)
+python AML-100.py --backtest --data hybrid --days 60
 
-# Monitoring with Streamlit dashboard
+# Backtest with synthetic data
+python AML-100.py --backtest --data synthetic --days 90
+
+# Optimization only
+python AML-100.py --optimize --trials 50
+
+# Live monitoring dashboard
 streamlit run monitoring/dashboard_streamlit.py
 ```
+
+### Command Line Options
+
+| Option | Description |
+|--------|-------------|
+| `--train` | Run model training only |
+| `--backtest` | Run backtest only |
+| `--optimize` | Run parameter optimization only |
+| `--data` | Data source: `xyz100`, `hybrid`, `synthetic`, `btc` |
+| `--days` | Historical data days (default: 30) |
+| `--epochs` | Training epochs (default: 100) |
+| `--trials` | Optimization trials (default: 50) |
+| `--hft` | Enable HFT mode (tighter TP/SL) |
+| `--log-level` | Logging level: DEBUG, INFO, WARNING, ERROR |
 
 ## Project Structure
 
 ```
 AML-100/
+├── AML-100.py              # Main entry point
 ├── config/
-│   ├── objectives.json      # Trading objectives and thresholds
-│   ├── params.json          # XYZ100-optimized parameters
-│   └── api.json             # API configuration for XYZ100
+│   ├── api.json            # API configuration
+│   ├── objectives.json     # Trading objectives
+│   ├── params.json         # Trading parameters
+│   └── params_ultra_hft.json  # Ultra-HFT variant
 ├── src/
-│   ├── hyperliquid_api.py   # Async API wrapper
-│   ├── data_fetcher.py      # XYZ100 data + BTC fallback
-│   ├── risk_manager.py      # Risk management with equity vol
-│   ├── ml_model.py          # Hybrid LSTM+DQN with equity features
-│   ├── optimizer.py         # Bayesian optimization
-│   └── main.py              # Core orchestration
+│   ├── main.py             # Core orchestration
+│   ├── ml_model.py         # Hybrid LSTM+DQN model
+│   ├── data_fetcher.py     # Data acquisition
+│   ├── hyperliquid_api.py  # API wrapper
+│   ├── risk_manager.py     # Risk management
+│   └── optimizer.py        # Bayesian optimization
 ├── monitoring/
-│   ├── monitor_live.py      # Live terminal dashboard
-│   ├── monitor_cycles.py    # Cycle status monitor
-│   ├── dashboard_metrics.py # Performance metrics
-│   └── dashboard_health.py  # System health monitor
+│   ├── dashboard_streamlit.py  # Web dashboard
+│   ├── monitor_live.py     # Terminal dashboard
+│   └── monitor_cycles.py   # Cycle monitor
 ├── scripts/
-│   ├── setup_env.sh         # Environment setup
-│   ├── launch.py            # Main entry point
-│   └── backup.py            # Backup management
-├── tests/                   # Test suite
-├── data/                    # Cached market data (auto-created)
-├── models/                  # Saved ML models (auto-created)
-├── logs/                    # System logs (auto-created)
-├── requirements.txt         # Python dependencies
-└── README.md
+│   ├── backup.py           # Backup management
+│   ├── check_wallet.py     # Wallet checker
+│   └── validate_config.py  # Config validation
+├── tests/                  # Test suite (77 tests)
+├── data/                   # Market data (auto-created)
+├── models/                 # Saved models (auto-created)
+├── logs/                   # System logs (auto-created)
+└── requirements.txt        # Dependencies
 ```
 
 ## Configuration
 
-### Trading Parameters (config/params.json)
+### Key Parameters (config/params.json)
 
-Optimized for XYZ100-USDC equity perpetual volatility:
-
-- take_profit_pct: 3.5%
-- stop_loss_pct: 1.2%
-- position_size_pct: 40%
-- max_positions: 1
-- leverage: 1
-- tp_mult: 2.5
-- sl_mult: 0.5
-- learning_rate: 0.0005
-- epsilon_end: 0.05
-- backtest_days: 90
-- slippage_pct: 0.02%
-- latency_ms: 1-10ms
+```json
+{
+  "trading": {
+    "take_profit_pct": 0.5,
+    "stop_loss_pct": 0.25,
+    "position_size_pct": 0.4,
+    "min_q_diff": 0.50,
+    "max_hold_seconds": 60
+  },
+  "ml_model": {
+    "epsilon_decay": 0.997,
+    "early_stop_patience": 30,
+    "enable_torch_compile": true
+  }
+}
+```
 
 ### Objectives (config/objectives.json)
 
-- monthly_performance_min: 5%
-- monthly_performance_max: 25%
-- drawdown_max: 5%
-- auto_stop_drawdown: 4%
-- sharpe_min: 1.5
-- profit_factor_min: 1.1
-
-## BTC Fallback System
-
-When XYZ100-USDC has insufficient historical data (< 5000 records or < 30 days), the system automatically:
-
-1. **Logs Warning**: XYZ100-USDC insufficient history - Using BTC fallback
-2. **Uses BTC Data**: For training and backtesting
-3. **Continues XYZ100 Live**: Live trading still uses XYZ100-USDC orderbook
-4. **Auto-Checks Hourly**: Periodically checks if XYZ100 has enough data
-5. **Auto-Switches**: When XYZ100 reaches 5000+ records, automatically switches
+- `monthly_performance_min`: 15%
+- `drawdown_max`: 5%
+- `auto_stop_drawdown`: 4%
+- `sharpe_ratio_min`: 1.5
+- `profit_factor_min`: 1.3
 
 ## Autonomous Behavior
 
-The system operates in a continuous loop:
+When running without flags, the system operates in a continuous loop:
 
-1. **Hourly Backtest** (every 3600 seconds)
-   - Runs vectorized backtest on 90 days of data
-   - Uses 0.02% slippage, 1-10ms latency simulation
-   - Evaluates strategy performance
-
-2. **Performance Assessment**
-   - Determines status: CRITICAL | POOR | MODERATE | GOOD
-   - Triggers parameter adjustments based on status
-
-3. **Parameter Optimization**
-   - Bayesian optimization with XYZ100-tuned ranges
-   - TP: 1-5%, SL: 0.4-2% for equity volatility
-
-4. **Model Training**
-   - Continuous learning with equity-specific features
-   - ~18 epochs for critical retrains with live append
-
-5. **Trading Cycles** (every 300 seconds)
-   - Real-time signal generation < 1ms
-   - Position management
-   - Risk enforcement with equity vol adjustment
+1. **Hourly Backtest** - Evaluates strategy performance
+2. **Status Assessment** - CRITICAL → POOR → MODERATE → GOOD
+3. **Parameter Optimization** - Bayesian optimization if needed
+4. **Model Training** - Continuous learning
+5. **Trading Cycles** - Real-time signal generation and execution
 
 ### Status-Based Actions
 
-| Status | Position Size | Action |
-|--------|--------------|--------|
-| CRITICAL | 50% reduction | Halt new trades, run optimization (~18 epochs) |
-| POOR | 25% reduction | Reduce exposure, quick adjust |
-| MODERATE | Normal | Maintain strategy |
-| GOOD | 10% increase | Optimize for growth |
+| Status | Action |
+|--------|--------|
+| CRITICAL | Halt trading, run optimization |
+| POOR | Reduce position size 25% |
+| MODERATE | Maintain strategy |
+| GOOD | Increase position size 10% |
 
-## Monitoring
+## Risk Management
 
-### Live Terminal Dashboard
+- **Drawdown Halt**: Pauses at 4% drawdown
+- **Position Limits**: Maximum 1 position
+- **Dynamic Stop-Loss**: ATR-based adjustment
+- **Kelly Criterion**: Optimal position sizing
 
-```bash
-python monitoring/monitor_live.py
-```
-
-Displays real-time:
-- Current XYZ100 position and P/L
-- Signal confidence
-- Risk metrics
-- Fallback status
-
-### Cycle Monitor
+### Emergency Stop
 
 ```bash
-python monitoring/monitor_cycles.py
-```
+# Create emergency stop file
+touch /tmp/mla_emergency_stop
 
-Shows:
-- Backtest results
-- Training progress
-- Optimization history
-- XYZ100 data availability
+# Resume trading
+rm /tmp/mla_emergency_stop
+```
 
 ## Testing
 
@@ -252,135 +190,83 @@ Shows:
 # Run all tests
 pytest tests/ -v
 
-# Run specific test file
-pytest tests/test_ml_model.py -v
-
 # Run with coverage
 pytest tests/ --cov=src --cov-report=html
 ```
 
-## Risk Management
+## Performance
 
-### Automatic Protections
+Recent backtest results (60-day hybrid data):
 
-- **Drawdown Halt**: Trading pauses at 4% drawdown
-- **Position Limits**: Maximum 1 position at a time
-- **Dynamic Stop-Loss**: Adjusts based on equity volatility (1.2x ATR)
-- **Kelly Criterion**: Optimal position sizing with 0.25 fraction
+| Metric | Value |
+|--------|-------|
+| Return | ~0% (flat) |
+| Max Drawdown | 2.25% |
+| Win Rate | 47.6% |
+| Profit Factor | 0.97 |
+| Total Trades | 2,152 |
 
-### Equity Volatility Adjustment
+## Monitoring
 
-The risk manager applies a 1.2x volatility adjustment for XYZ100.
-
-### Manual Override
+### Streamlit Dashboard
 
 ```bash
-# Emergency stop
-touch /tmp/mla_emergency_stop
-
-# Resume trading
-rm /tmp/mla_emergency_stop
+streamlit run monitoring/dashboard_streamlit.py
 ```
 
-## Advanced Configuration
+Features:
+- Real-time wallet PnL
+- Trade density heatmap
+- Position tracking
+- Alert system
 
-### MPS/GPU Optimization
+### Terminal Dashboard
 
-The system automatically detects and uses Apple Metal Performance Shaders:
-
-```python
-device = "mps" if torch.backends.mps.is_available() else "cpu"
+```bash
+python monitoring/monitor_live.py
 ```
 
-### XYZ100 Equity Features
+## Troubleshooting
 
-Custom features for equity perpetuals in src/data_fetcher.py:
+### XYZ100 API Returns 500 Errors
 
-- equity_vol_5: 5-period annualized volatility
-- equity_vol_20: 20-period annualized volatility
-- implied_vol_proxy: IV estimate from price range
-- mean_revert_signal: Mean reversion strength
-- gap_pct: Gap detection
-- gap_filled: Gap fill indicator
-- trend_persistence: Trend strength
-- volume_spike: Volume anomaly detection
+The system automatically falls back to synthetic data when XYZ100 API is unavailable:
 
-## Performance Metrics
+```
+Using synthetic_spx fallback data (129600 rows)
+```
 
-The system tracks and optimizes for:
+### Rate Limiting
 
-- **Sharpe Ratio**: Risk-adjusted returns (target >= 1.5)
-- **Profit Factor**: Gross profit / Gross loss (target >= 1.1)
-- **Max Drawdown**: Peak-to-trough decline (limit <= 5%)
-- **Win Rate**: Percentage of winning trades
-- **Average R:R**: Average risk-reward ratio
-- **Monthly Projection**: Extrapolated monthly return
+The system includes automatic exponential backoff and circuit breaker:
+
+```
+Circuit breaker OPEN: 3 consecutive failures. Pausing for 60s
+```
+
+### Model Not Training
+
+Check training parameters:
+- Increase `trade_bonus` if model produces too many HOLD actions
+- Adjust `min_q_diff` threshold for trade filtering
 
 ## Security
 
-- API keys stored in environment variables only
-- No credentials in code or config files
+- API keys stored in `.env` (gitignored)
+- No credentials in code or config
 - Encrypted WebSocket connections
-- Rate limiting (< 15 API calls/min)
-
-## Logging
-
-Logs are stored in logs/:
-- mla_hft_*.log: Main system events
-- Trade executions with XYZ100 symbol
-- Fallback status changes
-- Model training progress
-
-## Backup and Recovery
-
-### Automatic Backups
-
-```bash
-# Create backup
-python scripts/backup.py --create
-
-# List backups
-python scripts/backup.py --list
-
-# Restore from backup
-python scripts/backup.py --restore backup_20240101_120000.tar.gz
-```
+- Rate limiting (< 15 calls/min)
 
 ## Disclaimer
 
 **This software is for educational and research purposes only.**
 
-Trading equity perpetuals involves substantial risk of loss. XYZ100-USDC is a new instrument with limited history. Past performance does not guarantee future results.
+Trading perpetual futures involves substantial risk of loss. Past performance does not guarantee future results.
 
 - Always test with small amounts first
 - Never invest more than you can afford to lose
 - Monitor the system regularly
-- Be aware of fallback mode limitations
-
-## Troubleshooting
-
-### Rate Limit Issues
-
-If you see RATE LIMIT HIT:
-1. System will auto-backoff with exponential delay
-2. Check config/api.json rate limit settings
-3. Circuit breaker will pause after 3 consecutive failures
-
-### Insufficient XYZ100 History
-
-If you see XYZ100-USDC insufficient history:
-1. System automatically uses BTC fallback
-2. Live trading continues on XYZ100
-3. System rechecks hourly for XYZ100 data
-4. Auto-switches when 5000+ records available
-
-### Low Data Quality
-
-If backtest shows poor results:
-1. Check if using fallback (BTC data)
-2. Increase data_days in params.json
-3. Consider waiting for more XYZ100 history
 
 ---
 
-**Built for autonomous trading of XYZ100-USDC on Hyperliquid HIP-3 mainnet**
+**Built for Hyperliquid HIP-3 mainnet**

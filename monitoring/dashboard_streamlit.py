@@ -132,7 +132,7 @@ if user_state and fills:
             # Trade density heatmap
             df_fills = pd.DataFrame(recent_fills)
             df_fills['datetime'] = pd.to_datetime(df_fills['time'], unit='ms')
-            df_fills['hour'] = df_fills['datetime'].dt.hour
+            df_fills['hour'] = pd.to_datetime(df_fills['datetime']).dt.hour
             
             hourly_counts = df_fills.groupby('hour').size().reindex(range(24), fill_value=0)
             

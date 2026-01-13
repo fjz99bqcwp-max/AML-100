@@ -1,0 +1,31 @@
+{
+  "last_shutdown": 1768278655.2918909,
+  "cycle_number": 0,
+  "objectives_met": false,
+  "latest_metrics": {
+    "total_trades": 2152,
+    "total_return_pct": -0.01995841155138578,
+    "final_capital": 999.8004158844861,
+    "backtest_time": 139.66455793380737,
+    "data_points": 86400,
+    "avg_latency_ms": 9.995913661952207,
+    "buy_signals": 4061,
+    "sell_signals": 5756,
+    "backtest_days": 60,
+    "win_rate": 47.58364312267658,
+    "profit_factor": 0.9657012828062782,
+    "sharpe_ratio": -0.2533497978635765,
+    "max_drawdown_pct": 2.250032239114226,
+    "monthly_projection": -0.009979703748130841,
+    "trade_density_pct": 2.492471623812833,
+    "objectives_met": false
+  },
+  "signal_counts": {},
+  "hold_time_stats": {
+    "avg": 0,
+    "min": 0,
+    "max": 0,
+    "target": 30
+  },
+  "hft_mode": true
+}

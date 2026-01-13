@@ -43,6 +43,7 @@ env/
 data/
 *.parquet
 *.pkl
+*.joblib
 
 # Models (can be retrained)
 models/
@@ -50,11 +51,18 @@ models/
 *.pth
 
 # Logs
-logs/
-*.log
+logs/*.log
+logs/reward_hist.png
 
-# Backups
-backups/
+# Backups and cache
+data/backups/
+data/cache/
+data/backtests/
+
+# Keep structure with .gitkeep
+!data/backups/.gitkeep
+!data/cache/.gitkeep
+!data/backtests/.gitkeep
 
 # OS
 .DS_Store
