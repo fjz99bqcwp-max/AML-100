@@ -20,6 +20,7 @@ from collections import deque
 
 import numpy as np
 import pandas as pd
+import torch
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -392,18 +393,26 @@ class AMLHFTSystem:
                         with torch.no_grad():
                             action, confidence, q_values = self._ml_model.predict(feature_seq)
                         
-                        # RSI fallback logic with lower threshold for HFT
+                        # Signal filtering with q_diff threshold (Step 5: align backtest with live)
                         signal_threshold = self.params["trading"]["signal_threshold"]
+                        min_q_diff = self.params["trading"].get("min_q_diff", 0.005)
                         q_diff = np.max(q_values) - np.min(q_values)
-                        if q_diff < signal_threshold:
+                        
+                        # Filter trades based on confidence (min_q_diff)
+                        if q_diff < min_q_diff:
+                            # Low confidence - use RSI fallback for strong signals only
                             if "rsi" in df.columns and not pd.isna(df.iloc[i]["rsi"]):
                                 rsi = df.iloc[i]["rsi"]
-                                if rsi < 38:
+                                if rsi < 30:  # Strong oversold
                                     action = 1
                                     buy_signals += 1
-                                elif rsi > 62:
+                                elif rsi > 70:  # Strong overbought
                                     action = 2
                                     sell_signals += 1
+                                else:
+                                    action = 0  # Force HOLD on low confidence
+                            else:
+                                action = 0  # Force HOLD on low confidence
                         else:
                             if action == 1:
                                 buy_signals += 1

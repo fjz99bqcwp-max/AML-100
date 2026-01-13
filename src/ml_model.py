@@ -350,6 +350,8 @@ class RewardConfig:
     early_bonus_epochs: int = 8  # Epochs to apply early bonus
     early_bonus_amount: float = 0.35  # Bonus for trading in early epochs
     hold_penalty: float = 0.008  # Penalty for holding (anti-stagnation)
+    hold_timeout_seconds: int = 60  # Timeout before severe hold penalty
+    hold_timeout_penalty: float = 1.0  # Severe penalty for holding too long
     commission_rate: float = 0.0005  # Transaction cost
     min_trade_reward: float = -0.3  # Floor for trade rewards (tighter)
     max_trade_reward: float = 2.0  # Ceiling for trade rewards (higher)
@@ -455,7 +457,6 @@ class MLModel:
         # Profiling support
         self.profiling_enabled = False
         self.epoch_times: List[float] = []
-
         
         # Training state
         self.input_size: int = 0
@@ -488,6 +489,11 @@ class MLModel:
         
         # Metrics
         self.training_history: List[TrainingMetrics] = []
+    
+    @staticmethod
+    def _strip_compiled_prefix(state_dict: dict) -> dict:
+        """Strip _orig_mod. prefix from state_dict keys (torch.compile compatibility)"""
+        return {k.replace('_orig_mod.', ''): v for k, v in state_dict.items()}
         
     def initialize_model(self, input_size: int) -> None:
         """Initialize model architecture with M4 optimizations"""
@@ -525,7 +531,9 @@ class MLModel:
             dropout=self.ml_config.get("dropout", 0.2)
         ).to(self.device)
         
-        self.target_model.load_state_dict(self.model.state_dict())
+        # Strip _orig_mod. prefix if model was compiled with torch.compile()
+        state_dict = self._strip_compiled_prefix(self.model.state_dict())
+        self.target_model.load_state_dict(state_dict)
         self.target_model.eval()
         
         self.optimizer = optim.Adam(
@@ -734,8 +742,8 @@ class MLModel:
             self._consecutive_holds += 1
             
             # TIMEOUT PENALTY: Severe penalty for HOLD >60s (HFT should act fast)
-            hold_timeout_seconds = cfg.get('hold_timeout_seconds', 60)
-            hold_timeout_penalty = cfg.get('hold_timeout_penalty', 1.0)
+            hold_timeout_seconds = cfg.hold_timeout_seconds
+            hold_timeout_penalty = cfg.hold_timeout_penalty
             
             if self._consecutive_holds > hold_timeout_seconds:
                 base_reward = -hold_timeout_penalty * status_scale
@@ -1000,18 +1008,17 @@ class MLModel:
         
         total_reward = 0.0
         
-        # Batch action selection (vectorized)
+        # Batch action selection with PER-ACTION epsilon-greedy (NOT batch-wide)
         self.model.eval()
         with torch.no_grad():
             sampled_states = all_states[sample_indices]
             q_values = self.model(sampled_states)
             
-            if self.epsilon > np.random.random():
-                # Random actions for exploration
-                actions = np.random.randint(0, 3, size=len(sample_indices))
-            else:
-                # Greedy actions
-                actions = q_values.argmax(dim=1).cpu().numpy()
+            # Per-action epsilon-greedy: each action independently explores or exploits
+            greedy_actions = q_values.argmax(dim=1).cpu().numpy()
+            random_actions = np.random.randint(0, 3, size=len(sample_indices))
+            explore_mask = np.random.random(len(sample_indices)) < self.epsilon
+            actions = np.where(explore_mask, random_actions, greedy_actions)
         
         self.model.train()
         
@@ -1276,7 +1283,8 @@ class MLModel:
         loss = F.smooth_l1_loss(current_q, target_q)
         
         # Get gradient of loss w.r.t. input
-        loss.backward(retain_graph=True)
+        # Note: Use retain_graph=False for torch.compile compatibility
+        loss.backward()
         
         # Create adversarial perturbation (FGSM)
         if states_adv.grad is not None:
@@ -1472,7 +1480,9 @@ class MLModel:
     def update_target_network(self) -> None:
         """Update target network with current model weights"""
         if self.target_model is not None and self.model is not None:
-            self.target_model.load_state_dict(self.model.state_dict())
+            # Strip _orig_mod. prefix for torch.compile() compatibility
+            state_dict = self._strip_compiled_prefix(self.model.state_dict())
+            self.target_model.load_state_dict(state_dict)
     
     async def train(
         self,
@@ -2086,9 +2096,10 @@ class MLModel:
         
         filepath = self.model_dir / filename
         
+        # Strip _orig_mod. prefix for torch.compile() compatibility
         checkpoint = {
-            "model_state": self.model.state_dict(),
-            "target_state": self.target_model.state_dict() if self.target_model else None,
+            "model_state": self._strip_compiled_prefix(self.model.state_dict()),
+            "target_state": self._strip_compiled_prefix(self.target_model.state_dict()) if self.target_model else None,
             "optimizer_state": self.optimizer.state_dict() if self.optimizer else None,
             "epsilon": self.epsilon,
             "input_size": self.input_size,
@@ -2123,11 +2134,26 @@ class MLModel:
             # Type guards after initialization
             if self.model is None:
                 raise RuntimeError("model failed to initialize")
-                
-            self.model.load_state_dict(checkpoint["model_state"])
+            
+            # Handle torch.compile() state_dict compatibility
+            # Saved state has no prefix, but compiled model expects _orig_mod. prefix
+            model_state = checkpoint["model_state"]
+            is_compiled = hasattr(self.model, '_orig_mod')
+            
+            if is_compiled:
+                # Add _orig_mod. prefix for compiled models
+                model_state = {f'_orig_mod.{k}' if not k.startswith('_orig_mod.') else k: v 
+                               for k, v in model_state.items()}
+            else:
+                # Strip prefix for non-compiled models
+                model_state = self._strip_compiled_prefix(model_state)
+            
+            self.model.load_state_dict(model_state)
             
             if checkpoint.get("target_state") and self.target_model is not None:
-                self.target_model.load_state_dict(checkpoint["target_state"])
+                # Target model is never compiled, so always strip prefix
+                target_state = self._strip_compiled_prefix(checkpoint["target_state"])
+                self.target_model.load_state_dict(target_state)
             
             if checkpoint.get("optimizer_state") and self.optimizer is not None:
                 self.optimizer.load_state_dict(checkpoint["optimizer_state"])
