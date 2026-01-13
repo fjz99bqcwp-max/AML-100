@@ -46,6 +46,7 @@ class CycleMetrics:
     pnl_pct: float
     status: str
     adjustments_made: List[str]
+    avg_hold_time: float = 0.0  # HFT: Track average hold time per cycle
 
 
 @dataclass
@@ -226,15 +227,23 @@ class AMLHFTSystem:
         self.state.is_running = False
         self._shutdown_event.set()
         
-        # Step 5: Save state for resume
+        # Step 5: Save state for resume with HFT hold stats
         try:
             state_path = Path("logs/system_state.json")
+            
+            # HFT: Get hold time statistics
+            hold_time_stats = {}
+            if self._risk_manager:
+                hold_time_stats = self._risk_manager.get_hold_time_stats()
+            
             state_data = {
                 "last_shutdown": time.time(),
                 "cycle_number": self.state.current_cycle,
                 "objectives_met": self.state.objectives_met,
                 "latest_metrics": self.latest_backtest_metrics,
                 "signal_counts": getattr(self, '_signal_counts', {}),
+                "hold_time_stats": hold_time_stats,  # HFT: Track hold times
+                "hft_mode": self.params.get("trading", {}).get("hft_mode", False),
             }
             with open(state_path, "w") as f:
                 json.dump(state_data, f, indent=2, default=str)
@@ -710,6 +719,10 @@ class AMLHFTSystem:
             else:
                 logger.warning("Entry order not filled, skipping SL/TP placement")
             
+            # HFT: Start tracking position hold time
+            if was_filled:
+                self._risk_manager.on_position_opened(current_price, position_size)
+            
             # Log trade
             trade_data = {
                 "timestamp": time.time(),
@@ -839,11 +852,37 @@ class AMLHFTSystem:
         
         if not positions:
             self.current_position = None
+            self._risk_manager.on_position_closed()  # HFT: track hold time
             return False
 
         for pos in positions:
             if pos.symbol == self.api_config["symbol"] and pos.size != 0:
                 self.current_position = pos
+                
+                # HFT: Check hold timeout first (forced exit after max_hold_seconds)
+                should_timeout_exit, seconds_held = self._risk_manager.check_hold_timeout()
+                if should_timeout_exit:
+                    logger.warning(f"⏰ HFT timeout exit: position held {seconds_held:.1f}s")
+                    await self._api.close_position(pos.symbol)
+                    self._api.clear_cache("user_state")
+                    self._api.clear_cache("positions")
+                    
+                    # Record the timeout exit
+                    trade_record = TradeRecord(
+                        timestamp=time.time(),
+                        symbol=pos.symbol,
+                        side="B" if pos.size > 0 else "A",
+                        entry_price=pos.entry_price,
+                        exit_price=pos.entry_price,  # Will be updated on fill
+                        size=abs(pos.size),
+                        pnl=pos.unrealized_pnl,
+                        pnl_pct=(pos.unrealized_pnl / (abs(pos.size) * pos.entry_price) * 100) if pos.entry_price > 0 else 0,
+                        hold_time=seconds_held,
+                        fees=0
+                    )
+                    await self._risk_manager.record_trade(trade_record)
+                    self._risk_manager.on_position_closed()  # HFT: track hold time
+                    return True
                 
                 # Use API-provided unrealized PnL directly when possible
                 # This avoids an extra get_orderbook() call
@@ -863,17 +902,19 @@ class AMLHFTSystem:
                     else:  # Short
                         pnl_pct = (pos.entry_price - current_price) / pos.entry_price * 100
                 
-                # Check TP/SL
-                tp_pct = self.params["trading"]["take_profit_pct"]
-                sl_pct = self.params["trading"]["stop_loss_pct"]
+                # HFT: Get dynamic TP/SL based on profitability
+                base_tp = self.params["trading"]["take_profit_pct"]
+                base_sl = self.params["trading"]["stop_loss_pct"]
+                tp_pct, sl_pct = self._risk_manager.get_dynamic_tp_sl(base_tp, base_sl)
                 
                 if pnl_pct >= tp_pct:
-                    logger.info(f"Take profit triggered: {pnl_pct:.2f}%")
+                    logger.info(f"Take profit triggered: {pnl_pct:.2f}% >= {tp_pct:.2f}%")
                     await self._api.close_position(pos.symbol)
                     # Clear cache after position change
                     self._api.clear_cache("user_state")
                     self._api.clear_cache("positions")
 
+                    _, seconds_held = self._risk_manager.check_hold_timeout()
                     trade_record = TradeRecord(
                         timestamp=time.time(),
                         symbol=pos.symbol,
@@ -883,19 +924,21 @@ class AMLHFTSystem:
                         size=abs(pos.size),
                         pnl=pos.unrealized_pnl,
                         pnl_pct=pnl_pct,
-                        hold_time=0,
+                        hold_time=seconds_held,
                         fees=0
                     )
                     await self._risk_manager.record_trade(trade_record)
+                    self._risk_manager.on_position_closed()  # HFT: track hold time
                     return True
 
                 elif pnl_pct <= -sl_pct:
-                    logger.info(f"Stop loss triggered: {pnl_pct:.2f}%")
+                    logger.info(f"Stop loss triggered: {pnl_pct:.2f}% <= -{sl_pct:.2f}%")
                     await self._api.close_position(pos.symbol)
                     # Clear cache after position change
                     self._api.clear_cache("user_state")
                     self._api.clear_cache("positions")
 
+                    _, seconds_held = self._risk_manager.check_hold_timeout()
                     trade_record = TradeRecord(
                         timestamp=time.time(),
                         symbol=pos.symbol,
@@ -905,10 +948,11 @@ class AMLHFTSystem:
                         size=abs(pos.size),
                         pnl=pos.unrealized_pnl,
                         pnl_pct=pnl_pct,
-                        hold_time=0,
+                        hold_time=seconds_held,
                         fees=0
                     )
                     await self._risk_manager.record_trade(trade_record)
+                    self._risk_manager.on_position_closed()  # HFT: track hold time
                     return True
         return False
     
@@ -1324,6 +1368,9 @@ class AMLHFTSystem:
                 logger.info(f"Exited critical status after {self.consecutive_critical_count} cycles")
             self.consecutive_critical_count = 0
         
+        # HFT: Get average hold time for this cycle
+        avg_hold_time = self._risk_manager.get_avg_hold_time()
+        
         cycle_metrics = CycleMetrics(
             cycle_number=self.state.current_cycle,
             start_time=self.cycle_start_time,
@@ -1332,7 +1379,8 @@ class AMLHFTSystem:
             pnl=cycle_pnl,
             pnl_pct=cycle_pnl_pct,
             status=status.value,
-            adjustments_made=adjustments
+            adjustments_made=adjustments,
+            avg_hold_time=avg_hold_time
         )
         
         self.cycle_history.append(cycle_metrics)

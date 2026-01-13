@@ -97,6 +97,13 @@ class RiskManager:
         self.halt_reason: str = ""
         self.risk_level: str = "normal"  # normal, elevated, critical
         
+        # HFT Hold timeout tracking
+        self.position_entry_time: float = 0.0
+        self.max_hold_seconds: int = self.params["trading"].get("max_hold_seconds", 60)
+        self.target_hold_seconds: int = self.params["trading"].get("target_hold_seconds", 30)
+        self.force_exit_after_timeout: bool = self.params["trading"].get("force_exit_after_hold_timeout", True)
+        self.hold_times: deque = deque(maxlen=500)  # Track recent hold times for metrics
+        
         # Metrics cache
         self._last_metrics: Optional[RiskMetrics] = None
         self._metrics_update_time: float = 0.0
@@ -646,6 +653,86 @@ class RiskManager:
                 return trail_sl, False
             
             return entry_price * (1 + self.params["trading"]["stop_loss_pct"] / 100), False
+    
+    def on_position_opened(self, entry_price: float, size: float) -> None:
+        """Record position entry time for HFT hold tracking"""
+        self.position_entry_time = time.time()
+        logger.debug(f"Position opened: tracking hold time (max {self.max_hold_seconds}s)")
+    
+    def on_position_closed(self) -> None:
+        """Record hold time when position closes"""
+        if self.position_entry_time > 0:
+            hold_time = time.time() - self.position_entry_time
+            self.hold_times.append(hold_time)
+            self.position_entry_time = 0.0
+            logger.debug(f"Position closed: hold time {hold_time:.1f}s")
+    
+    def check_hold_timeout(self) -> Tuple[bool, float]:
+        """
+        Check if current position has exceeded max hold time.
+        Returns (should_force_exit, seconds_held)
+        """
+        if self.position_entry_time <= 0:
+            return False, 0.0
+        
+        seconds_held = time.time() - self.position_entry_time
+        should_exit = self.force_exit_after_timeout and seconds_held >= self.max_hold_seconds
+        
+        if should_exit:
+            logger.warning(f"⏰ Hold timeout! Position held {seconds_held:.1f}s > max {self.max_hold_seconds}s")
+        
+        return should_exit, seconds_held
+    
+    def get_avg_hold_time(self) -> float:
+        """Get average hold time from recent trades"""
+        if not self.hold_times:
+            return 0.0
+        return sum(self.hold_times) / len(self.hold_times)
+    
+    def get_hold_time_stats(self) -> Dict[str, float]:
+        """Get hold time statistics for monitoring"""
+        if not self.hold_times:
+            return {"avg": 0, "min": 0, "max": 0, "target": self.target_hold_seconds}
+        
+        times = list(self.hold_times)
+        return {
+            "avg": sum(times) / len(times),
+            "min": min(times),
+            "max": max(times),
+            "target": self.target_hold_seconds,
+            "within_target_pct": sum(1 for t in times if t <= self.target_hold_seconds) / len(times) * 100
+        }
+    
+    def get_dynamic_tp_sl(self, base_tp: float, base_sl: float) -> Tuple[float, float]:
+        """
+        Dynamically adjust TP/SL based on backtest profitability.
+        If profitable, can use tighter (scalping) levels.
+        """
+        # Get recent profitability
+        if len(self.trade_history) < 10:
+            return base_tp, base_sl
+        
+        recent_trades = list(self.trade_history)[-50:]
+        win_rate = sum(1 for t in recent_trades if t.pnl > 0) / len(recent_trades)
+        profit_factor = self._calculate_profit_factor()
+        
+        # If highly profitable, allow tighter TP/SL for faster scalping
+        scalp_tp = self.params["trading"].get("scalp_tp_pct", 0.5)
+        scalp_sl = self.params["trading"].get("scalp_sl_pct", 0.25)
+        micro_tp = self.params["trading"].get("micro_tp_pct", 0.1)
+        micro_sl = self.params["trading"].get("micro_sl_pct", 0.05)
+        
+        if profit_factor > 2.0 and win_rate > 0.7:
+            # Excellent performance: use micro TP/SL
+            logger.debug(f"Using micro TP/SL ({micro_tp}/{micro_sl}) - PF={profit_factor:.2f}, WR={win_rate:.1%}")
+            return micro_tp, micro_sl
+        elif profit_factor > 1.5 and win_rate > 0.55:
+            # Good performance: use scalp TP/SL
+            logger.debug(f"Using scalp TP/SL ({scalp_tp}/{scalp_sl}) - PF={profit_factor:.2f}, WR={win_rate:.1%}")
+            return scalp_tp, scalp_sl
+        else:
+            # Normal: use base TP/SL
+            return base_tp, base_sl
     
     async def should_allow_trade(self) -> Tuple[bool, str]:
         """Check if new trades should be allowed"""

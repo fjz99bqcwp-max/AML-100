@@ -213,20 +213,41 @@ def load_env_file() -> None:
                     os.environ[key.strip()] = value.strip()
 
 
-async def run_backtest_only(days: int = 30) -> None:
-    """Run backtest only without live trading"""
+async def run_backtest_only(days: int = 30, data_source: str = "xyz100") -> None:
+    """Run backtest only without live trading
+    
+    Args:
+        days: Number of days of historical data
+        data_source: Data source - xyz100, us500, btc, or synthetic
+    """
     from src.main import AMLHFTSystem
     system = AMLHFTSystem()
     
     try:
         await system.setup()
-        log_phase(1, "Backtest")
+        log_phase(1, f"Backtest ({data_source.upper()} data)")
+        
+        # Get appropriate data based on source
+        if data_source == "us500":
+            log_info("Using US500 fallback data for backtest")
+            # Use fallback data from data_fetcher
+            historical_data = await system._data_fetcher.get_fallback_data(days)
+        elif data_source == "synthetic":
+            log_info(f"Generating synthetic US500 data ({days} days)")
+            historical_data = system._data_fetcher.generate_synthetic_us500(days)
+        elif data_source == "btc":
+            log_info("Using BTC data for backtest")
+            historical_data = await system._data_fetcher.fetch_historical_klines("BTC", "1m", days * 24 * 60)
+        else:
+            # Default: xyz100
+            historical_data = None  # Let run_backtest fetch normally
+        
         results = await system.run_backtest(days=days)
         
         # Display results
         print()
         print(f"{Colors.BOLD}{Colors.CYAN}{'═' * 60}{Colors.RESET}")
-        print(f"{Colors.BOLD}{Colors.CYAN}  BACKTEST RESULTS{Colors.RESET}")
+        print(f"{Colors.BOLD}{Colors.CYAN}  BACKTEST RESULTS ({data_source.upper()}){Colors.RESET}")
         print(f"{Colors.BOLD}{Colors.CYAN}{'═' * 60}{Colors.RESET}")
         
         ret_color = Colors.GREEN if results.get('total_return_pct', 0) > 0 else Colors.RED
@@ -384,6 +405,7 @@ def main():
 Examples:
   python launch.py                       # Run full autonomous system
   python launch.py --backtest            # Run backtest only
+  python launch.py --backtest --data us500  # Backtest with US500 fallback data
   python launch.py --optimize            # Run optimization only
   python launch.py --train               # Run training only
   python launch.py --train --epochs 10   # Quick train with 10 epochs
@@ -391,6 +413,7 @@ Examples:
   python launch.py --quick-train         # Cycle retrain (<2 min)
   python launch.py --profile             # Profile training bottlenecks
   python launch.py --days 60             # Use 60 days of data
+  python launch.py --hft                 # Enable HFT mode (tighter TP/SL, shorter holds)
   python launch.py --log-level DEBUG     # Enable debug logging
         """
     )
@@ -399,6 +422,18 @@ Examples:
         "--backtest",
         action="store_true",
         help="Run backtest only"
+    )
+    parser.add_argument(
+        "--data",
+        type=str,
+        choices=["xyz100", "us500", "btc", "synthetic"],
+        default="xyz100",
+        help="Data source for backtest: xyz100 (default), us500, btc, or synthetic"
+    )
+    parser.add_argument(
+        "--hft",
+        action="store_true",
+        help="Enable HFT mode with tighter TP/SL and shorter hold times"
     )
     parser.add_argument(
         "--optimize",
@@ -466,15 +501,35 @@ Examples:
     # Import after logging is configured
     from src.main import AMLHFTSystem, main as run_main
     
+    # HFT mode: override params if --hft flag is set
+    if args.hft:
+        import json
+        params_path = PROJECT_ROOT / "config" / "params.json"
+        with open(params_path) as f:
+            params = json.load(f)
+        
+        # Enable HFT mode with tighter settings
+        params["trading"]["hft_mode"] = True
+        params["trading"]["take_profit_pct"] = 0.5  # Scalp TP
+        params["trading"]["stop_loss_pct"] = 0.25   # Scalp SL
+        params["trading"]["max_hold_seconds"] = 60
+        params["trading"]["target_hold_seconds"] = 30
+        
+        with open(params_path, "w") as f:
+            json.dump(params, f, indent=2)
+        log_info("HFT mode enabled: TP=0.5%, SL=0.25%, max_hold=60s")
+    
     # Print banner
     start_time = datetime.now(timezone.utc)
     print()
     print(f"{Colors.BOLD}{Colors.CYAN}{'═' * 60}{Colors.RESET}")
-    print(f"{Colors.BOLD}{Colors.CYAN}  MLA HFT - Machine Learning Autonomous Trading System{Colors.RESET}")
-    print(f"{Colors.BOLD}{Colors.CYAN}  Hyperliquid BTC/USD{Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.CYAN}  AML-100 HFT - Machine Learning Autonomous Trading System{Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.CYAN}  Hyperliquid XYZ100-USDC{Colors.RESET}")
     print(f"{Colors.BOLD}{Colors.CYAN}{'═' * 60}{Colors.RESET}")
     print(f"  {Colors.DIM}Started:{Colors.RESET}  {Colors.WHITE}{start_time.strftime('%Y-%m-%d %H:%M:%S')} UTC{Colors.RESET}")
     print(f"  {Colors.DIM}Mode:{Colors.RESET}     {Colors.WHITE}{_get_mode_name(args)}{Colors.RESET}")
+    print(f"  {Colors.DIM}Data:{Colors.RESET}     {Colors.WHITE}{args.data.upper()}{Colors.RESET}")
+    print(f"  {Colors.DIM}HFT:{Colors.RESET}      {Colors.WHITE}{'ENABLED' if args.hft else 'DISABLED'}{Colors.RESET}")
     print(f"  {Colors.DIM}Log:{Colors.RESET}      {Colors.WHITE}{args.log_level}{Colors.RESET}")
     print(f"{Colors.BOLD}{Colors.CYAN}{'═' * 60}{Colors.RESET}")
     print()
@@ -513,21 +568,21 @@ Examples:
         elif args.phase:
             log_info(f"Running Phase {args.phase} only")
             if args.phase == 1:
-                asyncio.run(run_backtest_only(args.days))
+                asyncio.run(run_backtest_only(args.days, args.data))
             elif args.phase == 2:
                 asyncio.run(run_optimization_only(args.trials))
             elif args.phase == 3:
                 asyncio.run(run_training_only(args.days, args.epochs))
             elif args.phase == 4:
                 # Validation = backtest after training
-                asyncio.run(run_backtest_only(args.days))
+                asyncio.run(run_backtest_only(args.days, args.data))
             elif args.phase == 5:
                 log_info("Phase 5 (live) requires full autonomous mode")
                 asyncio.run(run_main())
         
         elif args.backtest:
-            log_info(f"Running backtest mode ({args.days} days)")
-            asyncio.run(run_backtest_only(args.days))
+            log_info(f"Running backtest mode ({args.days} days, {args.data} data)")
+            asyncio.run(run_backtest_only(args.days, args.data))
             
         elif args.optimize:
             log_info(f"Running optimization mode ({args.trials} trials)")

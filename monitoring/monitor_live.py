@@ -245,6 +245,38 @@ def display_dashboard(data: dict, api: HyperliquidAPI, next_refresh: float):
         print(f"  {Colors.YELLOW}No recent trades{Colors.RESET}")
     print()
     
+    # HFT Mode Status - load from system state if available
+    system_state_file = PROJECT_ROOT / "logs" / "system_state.json"
+    if system_state_file.exists():
+        try:
+            with open(system_state_file) as f:
+                system_state = json.load(f)
+            
+            risk_metrics = system_state.get("risk_metrics", {})
+            hold_stats = system_state.get("hold_time_stats", {})
+            
+            print(f"{Colors.BOLD}⏱️  HFT Hold Time Stats{Colors.RESET}")
+            print("-" * 40)
+            
+            if hold_stats:
+                avg_hold = hold_stats.get("avg", 0)
+                min_hold = hold_stats.get("min", 0)
+                max_hold = hold_stats.get("max", 0)
+                target = hold_stats.get("target", 30)
+                within_target = hold_stats.get("within_target_pct", 0)
+                
+                # Color code based on target
+                avg_color = Colors.GREEN if avg_hold <= target else Colors.YELLOW
+                
+                print(f"  Avg Hold Time:    {avg_color}{avg_hold:.1f}s{Colors.RESET} (target: {target}s)")
+                print(f"  Min/Max:          {min_hold:.1f}s / {max_hold:.1f}s")
+                print(f"  Within Target:    {within_target:.1f}%")
+            else:
+                print(f"  {Colors.YELLOW}No hold time data yet{Colors.RESET}")
+            print()
+        except Exception:
+            pass  # Skip HFT stats if file read fails
+    
     # Market Data
     print(f"{Colors.BOLD}📊 Market Data (BTC){Colors.RESET}")
     print("-" * 40)
