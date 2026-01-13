@@ -238,63 +238,90 @@ class DataFetcher:
             logger.warning(f"Error fetching SPX: {e}, using synthetic data")
             return self.generate_synthetic_spx(days)
 
-    def generate_synthetic_spx(self, days: int = 365) -> pd.DataFrame:
+    def generate_synthetic_spx(self, days: int = 90) -> pd.DataFrame:
         """
         Generate synthetic SPX-like data for extended backtesting.
         Uses S&P500 statistical properties: ~15% annual vol, ~10% drift.
         Matches XYZ100 correlation coefficient of ~0.8.
+        
+        M4 OPTIMIZED: Chunked generation to avoid memory spikes
+        Default: 90 days (129,600 klines) to match backtest requirements
         """
         logger.info(f"Generating synthetic SPX data for {days} days")
         
         # Time parameters
         minutes_per_day = 24 * 60
-        total_minutes = days * minutes_per_day
+        total_minutes = days * minutes_per_day  # e.g., 90 days = 129,600 klines
         
-        # Convert annual params to per-minute
-        vol_per_minute = self.SPX_ANNUAL_VOL / np.sqrt(252 * minutes_per_day)
+        # Convert annual params to per-minute with 1.2x vol scaling for XYZ100 correlation
+        vol_scaling = 1.2  # Higher vol for equity perp
+        vol_per_minute = (self.SPX_ANNUAL_VOL * vol_scaling) / np.sqrt(252 * minutes_per_day)
         drift_per_minute = self.SPX_DRIFT / (252 * minutes_per_day)
         
         # Generate timestamps
         end_time = time.time()
         start_time = end_time - (days * 24 * 60 * 60)
-        timestamps = np.linspace(start_time, end_time, total_minutes)
         
-        # Geometric Brownian Motion for realistic price path
-        np.random.seed(42)  # Reproducible for backtesting
-        z = np.random.standard_normal(total_minutes)
+        # CHUNKED GENERATION for memory efficiency on M4
+        chunk_size = 10000  # 10k klines per chunk (~7 days)
+        all_chunks = []
         
-        # Add autocorrelation for mean reversion (equity characteristic)
-        phi = 0.02  # Mean reversion speed
-        for i in range(1, len(z)):
-            z[i] = z[i] * (1 - phi) + z[i-1] * phi
+        for chunk_start in range(0, total_minutes, chunk_size):
+            chunk_end = min(chunk_start + chunk_size, total_minutes)
+            chunk_len = chunk_end - chunk_start
+            
+            # Generate timestamps for chunk
+            chunk_timestamps = np.linspace(
+                start_time + (chunk_start * 60),
+                start_time + (chunk_end * 60),
+                chunk_len
+            )
+            
+            # Geometric Brownian Motion
+            np.random.seed(42 + chunk_start)  # Reproducible with different seed per chunk
+            z = np.random.standard_normal(chunk_len)
+            
+            # Mean reversion
+            phi = 0.02
+            for i in range(1, len(z)):
+                z[i] = z[i] * (1 - phi) + z[i-1] * phi
+            
+            # Generate log returns
+            log_returns = drift_per_minute + vol_per_minute * z
+            
+            # Starting price (carry from previous chunk or default)
+            if all_chunks:
+                start_price = all_chunks[-1]["close"].iloc[-1]
+            else:
+                start_price = 4500.0  # Approx SPX level
+            
+            prices = start_price * np.exp(np.cumsum(log_returns))
+            
+            # Generate OHLC
+            typical_range = vol_per_minute * 2
+            chunk_df = pd.DataFrame({
+                "timestamp": chunk_timestamps,
+                "close": prices,
+                "high": prices * (1 + np.abs(np.random.normal(0, typical_range, chunk_len))),
+                "low": prices * (1 - np.abs(np.random.normal(0, typical_range, chunk_len))),
+                "open": np.concatenate([[start_price], prices[:-1]]),
+            })
+            
+            # Volume with market hours boost
+            base_volume = 1000
+            hour_of_day = (chunk_df["timestamp"] % 86400) / 3600
+            market_hours_boost = np.where((hour_of_day >= 14.5) & (hour_of_day <= 21), 3.0, 1.0)
+            chunk_df["volume"] = base_volume * market_hours_boost * np.random.lognormal(0, 0.5, chunk_len)
+            
+            all_chunks.append(chunk_df)
+            
+            # Progress logging
+            progress = int((chunk_end / total_minutes) * 100)
+            if progress % 20 == 0:
+                logger.debug(f"Synthetic SPX generation: {progress}%")
         
-        # Generate log returns
-        log_returns = drift_per_minute + vol_per_minute * z
-        
-        # Starting price (approximate XYZ100 level)
-        start_price = 100.0
-        prices = start_price * np.exp(np.cumsum(log_returns))
-        
-        # Generate OHLC from close prices
-        df = pd.DataFrame({
-            "timestamp": timestamps,
-            "close": prices
-        })
-        
-        # Generate realistic OHLC spread
-        typical_range = vol_per_minute * 2  # Intrabar volatility
-        df["high"] = df["close"] * (1 + np.abs(np.random.normal(0, typical_range, len(df))))
-        df["low"] = df["close"] * (1 - np.abs(np.random.normal(0, typical_range, len(df))))
-        df["open"] = df["close"].shift(1).fillna(start_price)
-        
-        # Generate realistic volume (higher during "market hours")
-        base_volume = 1000
-        hour_of_day = (df["timestamp"] % 86400) / 3600
-        # US market hours (14:30-21:00 UTC) have higher volume
-        market_hours_boost = np.where((hour_of_day >= 14.5) & (hour_of_day <= 21), 3.0, 1.0)
-        df["volume"] = base_volume * market_hours_boost * np.random.lognormal(0, 0.5, len(df))
-        
-        # Reorder columns
+        # Combine all chunks
+        df = pd.concat(all_chunks, ignore_index=True)
         df = df[["timestamp", "open", "high", "low", "close", "volume"]]
         
         self._fallback_type = "synthetic_spx"

@@ -38,7 +38,7 @@
         "lstm_num_layers": 2,
         "dqn_hidden_size": 256,
         "learning_rate": 0.0008869487725367716,
-        "batch_size": 256,
+        "batch_size": 32,
         "epochs": 50,
         "sequence_length": 60,
         "gamma": 0.99,
@@ -154,14 +154,17 @@
         "high_vol_threshold": 0.03
     },
     "backtest": {
-        "days": 180,
+        "days": 90,
         "slippage_pct": 0.05,
         "latency_ms_min": 5,
         "latency_ms_max": 15,
         "commission_pct": 0.0005,
         "market_impact_pct": 0.01,
         "use_compound_returns": true,
-        "xyz100_vol_factor": 1.2
+        "xyz100_vol_factor": 1.2,
+        "chunk_size": 5000,
+        "memory_cleanup_freq": 10,
+        "enable_debug_logging": true
     },
     "api_optimization": {
         "poll_interval_sec": 15,

@@ -287,155 +287,251 @@ class AMLHFTSystem:
     ) -> Dict[str, Any]:
         """
         Run vectorized backtest with current parameters
-        Step 4: Enhanced with configurable slippage/latency simulation
-        
-        Args:
-            days: Number of days of data (ignored if historical_data provided)
-            save_results: Whether to save backtest results
-            historical_data: Pre-loaded DataFrame to use instead of fetching
+        M4 OPTIMIZED: Chunked processing with MPS memory management
         """
+        import gc
+        import torch
+        
         self._ensure_setup()
         
-        # Get backtest config (Step 4)
+        # Get backtest config
         backtest_cfg = self.params.get("backtest", {})
-        slippage_pct = backtest_cfg.get("slippage_pct", 0.015) / 100  # Step 4: 0.015% slippage
+        slippage_pct = backtest_cfg.get("slippage_pct", 0.015) / 100
         latency_min = backtest_cfg.get("latency_ms_min", 1)
         latency_max = backtest_cfg.get("latency_ms_max", 5)
         commission = backtest_cfg.get("commission_pct", 0.0005)
+        chunk_size = backtest_cfg.get("chunk_size", 5000)
+        cleanup_freq = backtest_cfg.get("memory_cleanup_freq", 10)
+        
+        # Enable DEBUG logging for backtest
+        if backtest_cfg.get("enable_debug_logging", False):
+            import logging
+            logging.getLogger().setLevel(logging.DEBUG)
         
         logger.info(f"📊 Starting backtest ({days} days, slippage={slippage_pct*100:.3f}%, latency={latency_min}-{latency_max}ms)...")
         self.state.mode = "backtest"
         
+        # MPS memory baseline
+        baseline_memory = 0
+        if torch.backends.mps.is_available():
+            try:
+                torch.mps.synchronize()
+                baseline_memory = torch.mps.driver_allocated_memory() / 1e9
+                logger.debug(f"MPS baseline memory: {baseline_memory:.2f}GB")
+            except:
+                logger.debug("MPS memory tracking unavailable")
+        
         start_time = time.time()
         
-        # Use provided data or fetch from API
-        if historical_data is not None and not historical_data.empty:
-            logger.info(f"Using provided historical data ({len(historical_data)} rows)")
-            df = self._data_fetcher._add_technical_features(historical_data)
-        else:
-            # Fetch historical data
-            df = await self._data_fetcher.get_training_data(
-                symbol=self.api_config["symbol"],
-                interval="1m",
-                days=days
-            )
-        
-        if df.empty or len(df) < 500:
-            logger.error(f"Insufficient data for backtest (got {len(df)} rows)")
-            return {"error": "insufficient_data"}
-        
-        # Prepare features
-        features, _ = self._ml_model.prepare_features(df)
-        prices = df["close"].values
-
-        # Initialize or use existing model
-        if self._ml_model.model is None:
-            self._ml_model.initialize_model(features.shape[1])
-        
-        # Step 4: Create backtest environment with realistic slippage
-        env = BacktestEnvironment(
-            df=df,
-            initial_capital=self.objectives["starting_capital_backtest"],
-            transaction_cost=commission,
-            slippage=slippage_pct,  # Step 4: Configurable slippage
-            take_profit_pct=self.params["trading"]["take_profit_pct"],
-            stop_loss_pct=self.params["trading"]["stop_loss_pct"]
-        )
-        
-        # Run backtest
-        seq_len = self._ml_model.sequence_length
-        buy_signals = 0
-        sell_signals = 0
-        latency_sum = 0.0  # Step 4: Track total latency for averaging
-        total_steps = len(df) - seq_len - 1
-        progress_interval = max(1, total_steps // 10)  # Log every 10%
-
-        for i in range(seq_len, len(df) - 1):
-            # Progress logging
-            step_num = i - seq_len
-            if step_num % progress_interval == 0:
-                pct = (step_num / total_steps) * 100
-                logger.info(f"Backtest progress: {pct:.0f}% ({step_num}/{total_steps})")
-            
-            # Step 4: Simulate random latency (1-5ms)
-            latency_ms = random.uniform(latency_min, latency_max)
-            latency_sum += latency_ms
-            
-            # Get feature sequence
-            feature_seq = features[i - seq_len:i]
-
-            # Get model prediction
-            action, confidence, q_values = self._ml_model.predict(feature_seq)
-            
-            # Step 4: More aggressive RSI fallback thresholds for more trades
-            q_diff = np.max(q_values) - np.min(q_values)
-            if q_diff < 0.08:  # Step 4: Lower threshold (was 0.1) for more ML confidence
-                # Fallback to RSI signal
-                if "rsi" in df.columns and not pd.isna(df.iloc[i]["rsi"]):
-                    rsi = df.iloc[i]["rsi"]
-                    if rsi < 38:  # Step 4: More aggressive (was 35)
-                        action = 1  # Buy on oversold
-                        buy_signals += 1
-                    elif rsi > 62:  # Step 4: More aggressive (was 65)
-                        action = 2  # Sell on overbought
-                        sell_signals += 1
+        try:
+            # Use provided data or fetch from API
+            if historical_data is not None and not historical_data.empty:
+                logger.info(f"Using provided historical data ({len(historical_data)} rows)")
+                df = self._data_fetcher._add_technical_features(historical_data)
             else:
-                if action == 1:
-                    buy_signals += 1
-                elif action == 2:
-                    sell_signals += 1
+                df = await self._data_fetcher.get_training_data(
+                    symbol=self.api_config["symbol"],
+                    interval="1m",
+                    days=days
+                )
             
-            # Execute action in environment
-            position_size_pct = self.params["trading"]["position_size_pct"]
-            reward, done = env.step(action, position_size_pct / 100)
+            if df.empty or len(df) < 500:
+                logger.error(f"Insufficient data for backtest (got {len(df)} rows)")
+                return {"error": "insufficient_data", "rows": len(df)}
             
-            if done:
-                break
-        
-        # Step 4: Calculate average latency
-        num_steps = len(df) - seq_len - 1
-        avg_latency_ms = latency_sum / max(num_steps, 1)
-        
-        logger.info(f"📊 Backtest signals - Buy: {buy_signals}, Sell: {sell_signals}, Trades: {len(env.trades)}, Avg latency: {avg_latency_ms:.2f}ms")
-        
-        # Get metrics
-        metrics = env.get_metrics()
-        metrics["backtest_time"] = time.time() - start_time
-        metrics["data_points"] = len(df)
-        metrics["avg_latency_ms"] = avg_latency_ms  # Step 4: Track latency
-        metrics["buy_signals"] = buy_signals
-        metrics["sell_signals"] = sell_signals
-        
-        # Step 4: Calculate and store monthly projection
-        total_return = metrics.get("total_return_pct", 0) / 100
-        backtest_days = metrics.get("backtest_days", 7)
-        if total_return > -1 and backtest_days > 0:
-            monthly_projection = ((1 + total_return) ** (30 / backtest_days) - 1) * 100
-        else:
-            monthly_projection = 0
-        metrics["monthly_projection"] = monthly_projection
-        
-        # Check against objectives
-        objectives_met = self._check_objectives(metrics)
-        metrics["objectives_met"] = objectives_met
-        
-        self.latest_backtest_metrics = metrics
-        self.state.last_backtest = time.time()
-        self.state.cycles_since_backtest = 0
-        self.state.objectives_met = objectives_met
-        
-        # Save results
-        if save_results:
-            await self._data_fetcher.save_backtest_results(metrics, "backtest")
-        
-        logger.info(
-            f"Backtest complete - Return: {metrics['total_return_pct']:.2f}%, "
-            f"Sharpe: {metrics['sharpe_ratio']:.2f}, "
-            f"MaxDD: {metrics['max_drawdown_pct']:.2f}%, "
-            f"Objectives met: {objectives_met}"
-        )
-        
-        return metrics
+            # Prepare features
+            features, _ = self._ml_model.prepare_features(df)
+            
+            # Initialize model if needed
+            if self._ml_model.model is None:
+                self._ml_model.initialize_model(features.shape[1])
+            
+            # CHUNKED PROCESSING for memory efficiency
+            seq_len = self._ml_model.sequence_length
+            total_rows = len(df)
+            all_trades = []
+            all_equity_curve = []
+            buy_signals = 0
+            sell_signals = 0
+            latency_sum = 0.0
+            
+            # Process in chunks
+            chunk_start_idx = seq_len
+            chunk_num = 0
+            
+            while chunk_start_idx < total_rows - 1:
+                chunk_end_idx = min(chunk_start_idx + chunk_size, total_rows - 1)
+                chunk_num += 1
+                
+                # Progress logging
+                progress_pct = int((chunk_end_idx / total_rows) * 100)
+                logger.info(f"Backtest progress: {progress_pct}% ({chunk_end_idx}/{total_rows}) [Chunk {chunk_num}]")
+                
+                # Create environment for this chunk
+                chunk_capital = self.objectives["starting_capital_backtest"] if chunk_start_idx == seq_len else all_equity_curve[-1]
+                env = BacktestEnvironment(
+                    df=df.iloc[max(0, chunk_start_idx-seq_len):chunk_end_idx+1].copy(),
+                    initial_capital=chunk_capital,
+                    transaction_cost=commission,
+                    slippage=slippage_pct,
+                    take_profit_pct=self.params["trading"]["take_profit_pct"],
+                    stop_loss_pct=self.params["trading"]["stop_loss_pct"]
+                )
+                
+                # Run inference on chunk with error handling
+                try:
+                    for i in range(chunk_start_idx, chunk_end_idx):
+                        # Simulate latency
+                        latency_ms = random.uniform(latency_min, latency_max)
+                        latency_sum += latency_ms
+                        
+                        # Get feature sequence
+                        feature_seq = features[i - seq_len:i]
+                        
+                        # Model prediction with memory safety
+                        with torch.no_grad():
+                            action, confidence, q_values = self._ml_model.predict(feature_seq)
+                        
+                        # RSI fallback logic
+                        q_diff = np.max(q_values) - np.min(q_values)
+                        if q_diff < 0.08:
+                            if "rsi" in df.columns and not pd.isna(df.iloc[i]["rsi"]):
+                                rsi = df.iloc[i]["rsi"]
+                                if rsi < 38:
+                                    action = 1
+                                    buy_signals += 1
+                                elif rsi > 62:
+                                    action = 2
+                                    sell_signals += 1
+                        else:
+                            if action == 1:
+                                buy_signals += 1
+                            elif action == 2:
+                                sell_signals += 1
+                        
+                        # Execute action
+                        position_size_pct = self.params["trading"]["position_size_pct"]
+                        reward, done = env.step(action, position_size_pct / 100)
+                        
+                        if done:
+                            break
+                            
+                except Exception as e:
+                    logger.error(f"Inference error at chunk {chunk_num}, row {i}: {type(e).__name__}: {e}")
+                    logger.error(f"Feature shape: {feature_seq.shape if hasattr(feature_seq, 'shape') else 'unknown'}")
+                    # Continue to next chunk
+                    chunk_start_idx = chunk_end_idx
+                    continue
+                
+                # Collect chunk results
+                all_trades.extend(env.trades)
+                if env.equity_curve:
+                    all_equity_curve.extend(env.equity_curve)
+                
+                # MPS memory cleanup
+                if progress_pct % cleanup_freq == 0 and torch.backends.mps.is_available():
+                    try:
+                        torch.mps.empty_cache()
+                        torch.mps.synchronize()
+                        current_memory = torch.mps.driver_allocated_memory() / 1e9
+                        logger.debug(f"MPS memory at {progress_pct}%: {current_memory:.2f}GB (Δ{current_memory - baseline_memory:+.2f}GB)")
+                    except:
+                        pass
+                
+                # Move to next chunk
+                chunk_start_idx = chunk_end_idx
+            
+            logger.info(f"📊 Backtest complete: {len(all_trades)} trades executed")
+            
+            # Calculate metrics from aggregated results
+            avg_latency_ms = latency_sum / max(total_rows - seq_len - 1, 1)
+            
+            # Build metrics dict (simplified - using BacktestEnvironment's final state)
+            final_capital = all_equity_curve[-1] if all_equity_curve else self.objectives["starting_capital_backtest"]
+            initial_capital = self.objectives["starting_capital_backtest"]
+            total_return_pct = ((final_capital - initial_capital) / initial_capital) * 100
+            
+            metrics = {
+                "total_trades": len(all_trades),
+                "total_return_pct": total_return_pct,
+                "final_capital": final_capital,
+                "backtest_time": time.time() - start_time,
+                "data_points": len(df),
+                "avg_latency_ms": avg_latency_ms,
+                "buy_signals": buy_signals,
+                "sell_signals": sell_signals,
+                "backtest_days": days
+            }
+            
+            # Calculate additional metrics if we have trades
+            if all_trades:
+                winning_trades = [t for t in all_trades if t.get("pnl", 0) > 0]
+                metrics["win_rate"] = (len(winning_trades) / len(all_trades)) * 100 if all_trades else 0
+                metrics["profit_factor"] = sum(t.get("pnl", 0) for t in winning_trades) / abs(sum(t.get("pnl", 0) for t in all_trades if t.get("pnl", 0) < 0)) if any(t.get("pnl", 0) < 0 for t in all_trades) else 1.0
+                
+                # Sharpe ratio (simplified)
+                returns = [t.get("pnl", 0) / initial_capital for t in all_trades]
+                if returns:
+                    metrics["sharpe_ratio"] = (np.mean(returns) / np.std(returns)) * np.sqrt(252) if np.std(returns) > 0 else 0
+                else:
+                    metrics["sharpe_ratio"] = 0
+                
+                # Max drawdown
+                peak = initial_capital
+                max_dd = 0
+                for equity in all_equity_curve:
+                    if equity > peak:
+                        peak = equity
+                    dd = ((peak - equity) / peak) * 100
+                    if dd > max_dd:
+                        max_dd = dd
+                metrics["max_drawdown_pct"] = max_dd
+            else:
+                metrics["win_rate"] = 0
+                metrics["profit_factor"] = 0
+                metrics["sharpe_ratio"] = 0
+                metrics["max_drawdown_pct"] = 0
+            
+            # Monthly projection
+            if total_return_pct > -100 and days > 0:
+                monthly_projection = ((1 + total_return_pct/100) ** (30 / days) - 1) * 100
+            else:
+                monthly_projection = 0
+            metrics["monthly_projection"] = monthly_projection
+            
+            # Check objectives
+            objectives_met = self._check_objectives(metrics)
+            metrics["objectives_met"] = objectives_met
+            
+            self.latest_backtest_metrics = metrics
+            self.state.last_backtest = time.time()
+            self.state.cycles_since_backtest = 0
+            self.state.objectives_met = objectives_met
+            
+            # Save results
+            if save_results:
+                await self._data_fetcher.save_backtest_results(metrics, "backtest")
+            
+            logger.info(
+                f"Backtest complete - Return: {metrics['total_return_pct']:.2f}%, "
+                f"Sharpe: {metrics['sharpe_ratio']:.2f}, "
+                f"MaxDD: {metrics['max_drawdown_pct']:.2f}%, "
+                f"Objectives met: {objectives_met}"
+            )
+            
+            # Final cleanup
+            gc.collect()
+            if torch.backends.mps.is_available():
+                try:
+                    torch.mps.empty_cache()
+                except:
+                    pass
+            
+            return metrics
+            
+        except Exception as e:
+            logger.error(f"Backtest failed: {type(e).__name__}: {e}", exc_info=True)
+            return {"error": str(e)}
     
     def _check_objectives(self, metrics: Dict[str, Any]) -> bool:
         """Check if metrics meet objectives with detailed logging"""
@@ -1520,19 +1616,46 @@ class AMLHFTSystem:
         logger.info(f"Phase 1: Initial Backtest ({backtest_days} days)")
         backtest_results = await self.run_backtest(days=backtest_days)
         
-        # Step 3: Store Phase 1 objectives status for Phase 4 comparison
-        self._phase1_objectives_met = self.state.objectives_met
-        logger.info(f"Phase 1 objectives met: {self._phase1_objectives_met}")
-        
+        # CRITICAL: Validate backtest completion
         if backtest_results.get("error"):
-            logger.error("Initial backtest failed - fetching fresh data")
+            logger.error("=" * 60)
+            logger.error("CRITICAL: Phase 1 backtest failed or incomplete")
+            logger.error(f"Error: {backtest_results.get('error')}")
+            logger.error("=" * 60)
+            logger.info("Attempting to fetch fresh data and retry...")
+            
             await self._data_fetcher.fetch_historical_klines(
                 symbol=self.api_config["symbol"],
                 interval="1m",
                 days=data_days
             )
             backtest_results = await self.run_backtest(days=backtest_days)
-            self._phase1_objectives_met = self.state.objectives_met
+            
+            # If still failing, halt
+            if backtest_results.get("error"):
+                logger.error("=" * 60)
+                logger.error("CRITICAL: Phase 1 backtest failed after retry")
+                logger.error("System halted. Please review logs and retry.")
+                logger.error("=" * 60)
+                self.state.is_running = False
+                return
+        
+        # Validate trade execution
+        if backtest_results.get("total_trades", 0) == 0:
+            logger.error("=" * 60)
+            logger.error("CRITICAL: Phase 1 backtest produced zero trades")
+            logger.error("This indicates a model inference or data issue")
+            logger.error(f"Data points: {backtest_results.get('data_points', 0)}")
+            logger.error("=" * 60)
+            self.state.is_running = False
+            return
+        
+        logger.info(f"✅ Phase 1 complete: {backtest_results.get('total_trades')} trades, "
+                    f"{backtest_results.get('total_return_pct', 0):.2f}% return")
+        
+        # Step 3: Store Phase 1 objectives status for Phase 4 comparison
+        self._phase1_objectives_met = self.state.objectives_met
+        logger.info(f"Phase 1 objectives met: {self._phase1_objectives_met}")
         
         # Optimization if objectives not met
         if not self.state.objectives_met:

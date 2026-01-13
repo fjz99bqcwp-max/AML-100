@@ -457,9 +457,9 @@ class HyperliquidAPI:
                         
                         await asyncio.sleep(wait_time)
                     elif response.status >= 500:
-                        # Server error - use exponential backoff
+                        # Server error - use exponential backoff up to 300s
                         text = await response.text()
-                        server_backoff = min(10 * (2 ** attempt), 120)
+                        server_backoff = min(10 * (2 ** attempt), 300)  # Cap at 5min instead of 120s
                         logger.error(
                             f"Server error {response.status}: {text[:200]}, "
                             f"retrying in {server_backoff}s (attempt {attempt + 1})"
