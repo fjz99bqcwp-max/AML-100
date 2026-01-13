@@ -218,7 +218,7 @@ async def run_backtest_only(days: int = 30, data_source: str = "xyz100") -> None
     
     Args:
         days: Number of days of historical data
-        data_source: Data source - xyz100, us500, btc, or synthetic
+        data_source: Data source - xyz100, spx, btc, or synthetic
     """
     from src.main import AMLHFTSystem
     system = AMLHFTSystem()
@@ -229,12 +229,12 @@ async def run_backtest_only(days: int = 30, data_source: str = "xyz100") -> None
         
         # Get appropriate data based on source
         historical_data = None
-        if data_source == "us500":
-            log_info("Using US500 fallback data for backtest")
+        if data_source == "spx":
+            log_info("Using SPX fallback data for backtest")
             historical_data = await system._data_fetcher.get_fallback_data(days)
         elif data_source == "synthetic":
-            log_info(f"Generating synthetic US500 data ({days} days)")
-            historical_data = system._data_fetcher.generate_synthetic_us500(days)
+            log_info(f"Generating synthetic SPX data ({days} days)")
+            historical_data = system._data_fetcher.generate_synthetic_spx(days)
         elif data_source == "btc":
             log_info("Using BTC data for backtest")
             historical_data = await system._data_fetcher.fetch_historical_klines("BTC", "1m", days)
@@ -404,7 +404,7 @@ def main():
 Examples:
   python launch.py                       # Run full autonomous system
   python launch.py --backtest            # Run backtest only
-  python launch.py --backtest --data us500  # Backtest with US500 fallback data
+  python launch.py --backtest --data spx  # Backtest with SPX fallback data
   python launch.py --optimize            # Run optimization only
   python launch.py --train               # Run training only
   python launch.py --train --epochs 10   # Quick train with 10 epochs
@@ -425,9 +425,9 @@ Examples:
     parser.add_argument(
         "--data",
         type=str,
-        choices=["xyz100", "us500", "btc", "synthetic"],
+        choices=["xyz100", "spx", "btc", "synthetic"],
         default="xyz100",
-        help="Data source for backtest: xyz100 (default), us500, btc, or synthetic"
+        help="Data source for backtest: xyz100 (default), spx, btc, or synthetic"
     )
     parser.add_argument(
         "--hft",

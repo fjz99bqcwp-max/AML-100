@@ -104,9 +104,9 @@ class DataFetcher:
         self._last_xyz100_check = 0.0
         self._xyz100_check_interval = 3600  # Check hourly
         
-        # US500/S&P500 synthetic data parameters
-        self.US500_ANNUAL_VOL = 0.15  # ~15% annualized volatility for S&P500
-        self.US500_DRIFT = 0.10  # ~10% annual drift
+        # SPX/S&P500 synthetic data parameters
+        self.SPX_ANNUAL_VOL = 0.15  # ~15% annualized volatility for S&P500
+        self.SPX_DRIFT = 0.10  # ~10% annual drift
         self.XYZ100_CORRELATION = 0.8  # Correlation with XYZ100
         
     def _ensure_directories(self) -> None:
@@ -201,25 +201,25 @@ class DataFetcher:
         logger.debug(f"Scaled BTC data for XYZ100 (vol_factor={XYZ100_VOL_FACTOR})")
         return df
 
-    async def fetch_us500_data(self, days: int = 180) -> Optional[pd.DataFrame]:
+    async def fetch_spx_data(self, days: int = 180) -> Optional[pd.DataFrame]:
         """
-        Fetch US500 data from HyperLiquid if available.
+        Fetch SPX (S&P 500 perpetual) data from HyperLiquid if available.
         Falls back to synthetic generation if not found.
         """
         try:
-            # Try fetching US500 from HyperLiquid (may not exist)
+            # Try fetching SPX from HyperLiquid
             now_ms = int(time.time() * 1000)
             start_ms = now_ms - (days * 24 * 60 * 60 * 1000)
             
-            klines = await self.api.get_historical_klines(
-                symbol="US500",
+            klines = await self.api.get_klines(
+                symbol="SPX",
                 interval="1m",
                 start_time=start_ms,
                 end_time=now_ms
             )
             
             if klines and len(klines) >= 1000:
-                logger.info(f"Fetched {len(klines)} US500 klines from HyperLiquid")
+                logger.info(f"Fetched {len(klines)} SPX klines from HyperLiquid")
                 df = pd.DataFrame([{
                     "timestamp": k.timestamp,
                     "open": k.open,
@@ -228,31 +228,31 @@ class DataFetcher:
                     "close": k.close,
                     "volume": k.volume
                 } for k in klines])
-                self._fallback_type = "US500"
+                self._fallback_type = "SPX"
                 return df
             else:
-                logger.info("US500 not available on HyperLiquid, generating synthetic data")
-                return self.generate_synthetic_us500(days)
+                logger.info("SPX not available on HyperLiquid, generating synthetic data")
+                return self.generate_synthetic_spx(days)
                 
         except Exception as e:
-            logger.warning(f"Error fetching US500: {e}, using synthetic data")
-            return self.generate_synthetic_us500(days)
+            logger.warning(f"Error fetching SPX: {e}, using synthetic data")
+            return self.generate_synthetic_spx(days)
 
-    def generate_synthetic_us500(self, days: int = 365) -> pd.DataFrame:
+    def generate_synthetic_spx(self, days: int = 365) -> pd.DataFrame:
         """
-        Generate synthetic US500-like data for extended backtesting.
+        Generate synthetic SPX-like data for extended backtesting.
         Uses S&P500 statistical properties: ~15% annual vol, ~10% drift.
         Matches XYZ100 correlation coefficient of ~0.8.
         """
-        logger.info(f"Generating synthetic US500 data for {days} days")
+        logger.info(f"Generating synthetic SPX data for {days} days")
         
         # Time parameters
         minutes_per_day = 24 * 60
         total_minutes = days * minutes_per_day
         
         # Convert annual params to per-minute
-        vol_per_minute = self.US500_ANNUAL_VOL / np.sqrt(252 * minutes_per_day)
-        drift_per_minute = self.US500_DRIFT / (252 * minutes_per_day)
+        vol_per_minute = self.SPX_ANNUAL_VOL / np.sqrt(252 * minutes_per_day)
+        drift_per_minute = self.SPX_DRIFT / (252 * minutes_per_day)
         
         # Generate timestamps
         end_time = time.time()
@@ -297,27 +297,27 @@ class DataFetcher:
         # Reorder columns
         df = df[["timestamp", "open", "high", "low", "close", "volume"]]
         
-        self._fallback_type = "synthetic_us500"
-        logger.info(f"Generated {len(df)} synthetic US500 klines ({days} days)")
+        self._fallback_type = "synthetic_spx"
+        logger.info(f"Generated {len(df)} synthetic SPX klines ({days} days)")
         return df
 
     async def get_fallback_data(self, days: int = 180) -> pd.DataFrame:
         """
-        Get fallback data prioritizing US500 over BTC.
-        Order: US500 (real) -> US500 (synthetic) -> BTC (scaled)
+        Get fallback data prioritizing SPX over BTC.
+        Order: SPX (real) -> SPX (synthetic) -> BTC (scaled)
         """
-        # Try US500 first
-        df = await self.fetch_us500_data(days)
+        # Try SPX first
+        df = await self.fetch_spx_data(days)
         if df is not None and len(df) > 0:
             return df
         
         # Fall back to BTC with scaling
-        logger.warning("US500 unavailable, falling back to BTC with vol scaling")
+        logger.warning("SPX unavailable, falling back to BTC with vol scaling")
         self._fallback_type = "BTC"
         now_ms = int(time.time() * 1000)
         start_ms = now_ms - (days * 24 * 60 * 60 * 1000)
         
-        klines = await self.api.get_historical_klines(
+        klines = await self.api.get_klines(
             symbol="BTC",
             interval="1m", 
             start_time=start_ms,
@@ -336,8 +336,8 @@ class DataFetcher:
             return self.scale_btc_data_for_xyz100(df)
         
         # Last resort: pure synthetic
-        logger.warning("BTC also unavailable, using pure synthetic US500")
-        return self.generate_synthetic_us500(days)
+        logger.warning("BTC also unavailable, using pure synthetic SPX")
+        return self.generate_synthetic_spx(days)
 
     def _add_equity_perp_features(self, df):
         """
@@ -799,18 +799,18 @@ class DataFetcher:
         
         # If primary symbol (XYZ100) data is insufficient, use fallback
         if (df.empty or len(df) < 500) and symbol == self.PRIMARY_SYMBOL:
-            logger.warning(f"{symbol} data insufficient ({len(df)} rows) - trying US500/BTC fallback")
+            logger.warning(f"{symbol} data insufficient ({len(df)} rows) - trying SPX/BTC fallback")
             self._using_fallback = True
             
-            # Try US500 first (better equity correlation)
+            # Try SPX first (better equity correlation)
             fallback_df = await self.get_fallback_data(days)
             if fallback_df is not None and len(fallback_df) >= 500:
                 logger.info(f"Using {self._fallback_type} fallback data ({len(fallback_df)} rows)")
                 df = fallback_df
             else:
                 # Last resort: synthetic data
-                logger.warning("All fallbacks failed, generating synthetic US500 data")
-                df = self.generate_synthetic_us500(days)
+                logger.warning("All fallbacks failed, generating synthetic SPX data")
+                df = self.generate_synthetic_spx(days)
         
         if df.empty:
             return df

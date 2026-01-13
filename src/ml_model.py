@@ -702,10 +702,21 @@ class MLModel:
         
         # Base reward from price movement using log(1 + return) for stability
         if action == self.HOLD:
-            # Step 3: STRONGER ANTI-STAGNATION: Much higher penalty for doing nothing
-            missed_opportunity = abs(price_change_pct) * 0.8  # Step 3: Increased from 0.6
-            base_reward = -(cfg.hold_penalty + missed_opportunity) * status_scale * 1.5  # Step 3: 1.5x penalty
+            # HOLD dominance penalty: punish excessive inactivity
+            # Track consecutive holds to escalate penalty
+            if not hasattr(self, '_consecutive_holds'):
+                self._consecutive_holds = 0
+            
+            self._consecutive_holds += 1
+            
+            # Escalating penalty for repeated holds
+            hold_multiplier = 1.0 + (self._consecutive_holds * 0.1)  # 10% increase per consecutive hold
+            missed_opportunity = abs(price_change_pct) * 0.8
+            base_reward = -(cfg.hold_penalty + missed_opportunity) * status_scale * 1.5 * hold_multiplier
         elif action == self.BUY:
+            # Reset consecutive holds on trade
+            self._consecutive_holds = 0
+            
             # Long position: profit from price increase
             # Use log scaling for more stable gradients
             if price_change_pct > 0:
@@ -713,6 +724,9 @@ class MLModel:
             else:
                 base_reward = price_change_pct - cfg.commission_rate
         else:  # SELL
+            # Reset consecutive holds on trade
+            self._consecutive_holds = 0
+            
             # Short position: profit from price decrease  
             if price_change_pct < 0:
                 base_reward = np.log1p(-price_change_pct * 100) / 100 - cfg.commission_rate

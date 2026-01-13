@@ -1514,7 +1514,7 @@ class AMLHFTSystem:
         
         # Step 3: Use data_days from config (default 90 days for better pattern coverage)
         data_days = self.params.get("ml_model", {}).get("data_days", 90)
-        backtest_days = min(data_days, 30)  # Use up to 30 days for backtest
+        backtest_days = data_days  # Unified: backtest on same 90 days as training
         
         # Initial backtest
         logger.info(f"Phase 1: Initial Backtest ({backtest_days} days)")
@@ -1538,6 +1538,10 @@ class AMLHFTSystem:
         if not self.state.objectives_met:
             logger.info("Phase 2: Parameter Optimization")
             await self.run_optimization(n_trials=30)
+            
+            # Reload params after optimization to apply new values
+            self.params = self._load_config("config/params.json")
+            logger.info("Reloaded params after optimization")
             
             # Re-run backtest
             backtest_results = await self.run_backtest(days=backtest_days)
@@ -1580,7 +1584,14 @@ class AMLHFTSystem:
                 # Allow launch but mark for monitoring
                 self.state.phase4_override = True
             else:
-                logger.warning("Proceeding with caution - model may need more training")
+                logger.error("=" * 60)
+                logger.error("CRITICAL: Phase 4 objectives not met - HALTING before live trading")
+                logger.error(f"Sharpe: {backtest_results.get('sharpe_ratio', 0):.2f} (min: {self.objectives.get('sharpe_ratio_min', 1.8)})")
+                logger.error(f"Monthly: {backtest_results.get('compound_monthly_pct', 0):.2f}% (min: {self.objectives.get('monthly_return_pct_min', 15)}%)")
+                logger.error("=" * 60)
+                logger.info("Please review backtest results, adjust objectives in config/objectives.json, or improve model training")
+                self.state.is_running = False
+                return
         else:
             self.state.phase4_override = False
         
