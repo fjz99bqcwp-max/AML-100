@@ -131,10 +131,14 @@ def display_dashboard(data: dict, api: HyperliquidAPI, next_refresh: float):
     
     now = get_utc_plus_1_now()
     
+    # Wallet address for reference
+    WALLET = os.environ.get("HYPERLIQUID_WALLET_ADDRESS", "0x12045C1Cc410461B24e4293Dd05e2a6c47ebb584")
+    
     print(f"{Colors.BOLD}{Colors.CYAN}{'=' * 60}")
-    print("  AML HFT - Live Trading Monitor")
+    print("  AML-100 HFT - Live Trading Monitor (XYZ100-USDC)")
     print("=" * 60 + f"{Colors.RESET}")
     print(f"  Time: {now.strftime('%Y-%m-%d %H:%M:%S')} UTC+1")
+    print(f"  Wallet: {WALLET[:10]}...{WALLET[-6:]}")
     print(f"  Next refresh in: {int(next_refresh)}s")
     print()
     

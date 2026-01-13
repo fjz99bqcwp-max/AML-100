@@ -1,10 +1,11 @@
 {
     "trading": {
-        "take_profit_pct": 3.5,
-        "stop_loss_pct": 1.2,
-        "position_size_pct": 0.3976853624816039,
+        "take_profit_pct": 4.0,
+        "stop_loss_pct": 1.5,
+        "position_size_pct": 0.30,
         "max_positions": 1,
         "leverage": 1,
+        "max_leverage": 20,
         "order_type": "limit",
         "slippage_tolerance_pct": 0.05,
         "signal_threshold": 0.0005,
@@ -134,21 +135,25 @@
         }
     },
     "risk": {
-        "kelly_fraction": 0.35,
+        "kelly_fraction": 0.25,
         "volatility_lookback": 20,
         "max_daily_loss_pct": 2.0,
         "max_correlation": 0.8,
         "var_confidence": 0.95,
-        "growth_factor": 1.35
+        "growth_factor": 1.35,
+        "xyz100_leverage_cap": 20,
+        "high_vol_position_reduction": 0.5,
+        "high_vol_threshold": 0.03
     },
     "backtest": {
-        "days": 90,
-        "slippage_pct": 0.02,
-        "latency_ms_min": 1,
-        "latency_ms_max": 10,
+        "days": 180,
+        "slippage_pct": 0.05,
+        "latency_ms_min": 5,
+        "latency_ms_max": 15,
         "commission_pct": 0.0005,
-        "market_impact_pct": 0.005,
-        "use_compound_returns": true
+        "market_impact_pct": 0.01,
+        "use_compound_returns": true,
+        "xyz100_vol_factor": 1.2
     },
     "api_optimization": {
         "poll_interval_sec": 15,

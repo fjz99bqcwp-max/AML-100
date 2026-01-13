@@ -165,6 +165,35 @@ class DataFetcher:
         """Check if currently using BTC fallback"""
         return self._using_fallback
     
+    def scale_btc_data_for_xyz100(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Scale BTC data to approximate XYZ100 equity volatility characteristics.
+        XYZ100 typically has ~1.2x higher volatility than BTC due to equity nature.
+        """
+        if df.empty or not self._using_fallback:
+            return df
+            
+        df = df.copy()
+        XYZ100_VOL_FACTOR = 1.2  # Equity perps have higher vol
+        
+        # Scale price returns to match equity volatility
+        close = df["close"]
+        returns = close.pct_change()
+        scaled_returns = returns * XYZ100_VOL_FACTOR
+        
+        # Reconstruct prices with scaled returns
+        df["close"] = close.iloc[0] * (1 + scaled_returns).cumprod()
+        
+        # Scale high/low range proportionally
+        price_range = df["high"] - df["low"]
+        mid_price = (df["high"] + df["low"]) / 2
+        scaled_range = price_range * XYZ100_VOL_FACTOR
+        df["high"] = mid_price + scaled_range / 2
+        df["low"] = mid_price - scaled_range / 2
+        
+        logger.debug(f"Scaled BTC data for XYZ100 (vol_factor={XYZ100_VOL_FACTOR})")
+        return df
+
     def _add_equity_perp_features(self, df):
         """
         Add XYZ100 equity perpetual specific features

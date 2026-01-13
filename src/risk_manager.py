@@ -385,12 +385,21 @@ class RiskManager:
         """
         Calculate optimal position size using modified Kelly criterion
         Accounts for signal strength, volatility, and risk limits
+        XYZ100-optimized with leverage cap and high vol reduction
         """
         if self.is_halted:
             return 0.0
         
         # Base position size from params
         base_size_pct = self.params["trading"]["position_size_pct"]
+        
+        # XYZ100 leverage cap (default 20x max)
+        xyz100_leverage_cap = self.risk_config.get("xyz100_leverage_cap", 20)
+        max_leverage = self.params["trading"].get("max_leverage", xyz100_leverage_cap)
+        current_leverage = self.params["trading"].get("leverage", 1)
+        if current_leverage > max_leverage:
+            logger.warning(f"Leverage {current_leverage}x exceeds XYZ100 cap {max_leverage}x, reducing")
+            current_leverage = max_leverage
         
         # Kelly fraction (reduced for safety)
         kelly_fraction = self.risk_config.get("kelly_fraction", 0.25)
@@ -420,10 +429,19 @@ class RiskManager:
             kelly_pct = base_size_pct * growth_factor
         
         # Adjust for volatility (reduce size in high vol) - Step 2: Less aggressive reduction
+        # XYZ100: High vol threshold triggers significant position reduction
+        high_vol_threshold = self.risk_config.get("high_vol_threshold", 0.03)
+        high_vol_reduction = self.risk_config.get("high_vol_position_reduction", 0.5)
+        
         vol_lookback = self.risk_config.get("volatility_lookback", 20)
         if current_volatility > 0:
-            vol_adjustment = 0.02 / current_volatility  # Target 2% vol
-            vol_adjustment = max(0.6, min(vol_adjustment, 1.5))  # Step 2: Higher floor (0.6 vs 0.5)
+            # XYZ100: More aggressive reduction in high vol (equity-like behavior)
+            if current_volatility > high_vol_threshold:
+                vol_adjustment = high_vol_reduction
+                logger.info(f"⚠️ High vol detected ({current_volatility:.4f} > {high_vol_threshold}), reducing position to {high_vol_reduction*100:.0f}%")
+            else:
+                vol_adjustment = 0.02 / current_volatility  # Target 2% vol
+                vol_adjustment = max(0.6, min(vol_adjustment, 1.5))  # Step 2: Higher floor (0.6 vs 0.5)
         else:
             vol_adjustment = 1.0
         

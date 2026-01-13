@@ -1,7 +1,7 @@
 {
-    "monthly_performance_min": 5,
-    "monthly_performance_max": 25,
-    "profit_factor_min": 1.1,
+    "monthly_performance_min": 10,
+    "monthly_performance_max": 30,
+    "profit_factor_min": 1.2,
     "sharpe_ratio_min": 1.5,
     "risk_reward": "variable",
     "win_rate": "variable",
@@ -15,11 +15,12 @@
     "min_cycles_for_status": 3,
     "min_trades_for_status": 3,
     "max_consecutive_criticals": 10,
-    "projected_monthly_good_threshold": 3.0,
-    "projected_monthly_moderate_threshold": 1.5,
+    "projected_monthly_good_threshold": 5.0,
+    "projected_monthly_moderate_threshold": 2.5,
     "unreal_thresh": 0.05,
     "status_pnl_thresh": -0.5,
-    "vol_factor": 1.0,
+    "vol_factor": 1.2,
+    "xyz100_equity_correlation": true,
     "status_thresholds": {
         "critical": {
             "sharpe_below": 0.2,

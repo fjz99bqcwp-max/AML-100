@@ -6,8 +6,8 @@ A fully autonomous machine learning-based high-frequency trading system for **XY
 
 | Metric | Target |
 |--------|--------|
-| Monthly Return | 5-25% |
-| Profit Factor | >= 1.1 |
+| Monthly Return | 10-30% |
+| Profit Factor | >= 1.2 |
 | Sharpe Ratio | >= 1.5 |
 | Max Drawdown | <= 5% |
 | Auto-Halt Threshold | 4% drawdown |
@@ -31,8 +31,9 @@ This system is specifically optimized for XYZ100 equity perpetuals:
 | Volatility | Higher (equity) | Moderate (crypto) |
 | Session Gaps | Possible | Rare |
 | Mean Reversion | Stronger | Weaker |
-| TP/SL Settings | 3.5%/1.2% | 2.3%/0.8% |
-| Position Size | 40% | 40% |
+| TP/SL Settings | 4.0%/1.5% | 2.3%/0.8% |
+| Position Size | 30% | 40% |
+| Max Leverage | 20x (capped) | 50x |
 
 ## Architecture Overview
 
