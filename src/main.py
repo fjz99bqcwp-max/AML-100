@@ -347,8 +347,16 @@ class AMLHFTSystem:
         buy_signals = 0
         sell_signals = 0
         latency_sum = 0.0  # Step 4: Track total latency for averaging
+        total_steps = len(df) - seq_len - 1
+        progress_interval = max(1, total_steps // 10)  # Log every 10%
 
         for i in range(seq_len, len(df) - 1):
+            # Progress logging
+            step_num = i - seq_len
+            if step_num % progress_interval == 0:
+                pct = (step_num / total_steps) * 100
+                logger.info(f"Backtest progress: {pct:.0f}% ({step_num}/{total_steps})")
+            
             # Step 4: Simulate random latency (1-5ms)
             latency_ms = random.uniform(latency_min, latency_max)
             latency_sum += latency_ms
