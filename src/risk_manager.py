@@ -383,6 +383,103 @@ class RiskManager:
             logger.error(f"Error calculating position heat: {e}")
             return 0.0
     
+    def calculate_dynamic_leverage(self, sharpe_30d: float) -> int:
+        """
+        Dynamic leverage scaling based on 30-day rolling Sharpe ratio.
+        Conservative (1x) → Aggressive (15x) based on strategy performance.
+        
+        Args:
+            sharpe_30d: Rolling 30-day Sharpe ratio
+            
+        Returns:
+            Leverage multiplier (1-15x)
+        """
+        max_leverage = self.params["trading"].get("max_leverage", 20)
+        
+        # Sharpe-based leverage tiers
+        if sharpe_30d >= 2.0:
+            leverage = 15  # Exceptional performance
+        elif sharpe_30d >= 1.5:
+            leverage = 12  # Strong performance
+        elif sharpe_30d >= 1.0:
+            leverage = 8   # Moderate performance
+        elif sharpe_30d >= 0.5:
+            leverage = 5   # Defensive
+        else:
+            leverage = 1   # Crisis mode
+        
+        leverage = min(leverage, max_leverage)
+        
+        logger.info(f"⚙️ Dynamic leverage: Sharpe30d={sharpe_30d:.2f} → {leverage}x (max={max_leverage}x)")
+        return leverage
+    
+    async def check_funding_rate(self, symbol: str = "XYZ100") -> float:
+        """
+        Fetch current funding rate from HyperLiquid.
+        Funding is paid every 8 hours on HyperLiquid.
+        
+        Args:
+            symbol: Trading symbol
+            
+        Returns:
+            Funding rate (8h basis, negative = longs pay shorts)
+        """
+        try:
+            from hyperliquid.info import Info
+            from hyperliquid.utils import constants
+            
+            info = Info(constants.MAINNET_API_URL, skip_ws=True)
+            meta = info.meta()
+            
+            for asset in meta['universe']:
+                if asset['name'] == symbol:
+                    funding = float(asset.get('funding', 0))
+                    logger.debug(f"💸 Funding {symbol}: {funding*100:.4f}% (8h)")
+                    return funding
+            
+            logger.warning(f"⚠️ Symbol {symbol} not found in meta, returning 0")
+            return 0.0
+            
+        except ImportError:
+            logger.error("❌ hyperliquid-python-sdk not installed for funding checks")
+            return 0.0
+        except Exception as e:
+            logger.error(f"❌ Funding fetch failed: {type(e).__name__}: {e}")
+            return 0.0
+    
+    def should_trade_with_funding(
+        self, 
+        action: int, 
+        funding: float, 
+        threshold: float = -0.0003
+    ) -> bool:
+        """
+        Block trades with unfavorable funding rates.
+        
+        Args:
+            action: 0=HOLD, 1=BUY/LONG, 2=SELL/SHORT
+            funding: Current funding rate (8h)
+            threshold: Block LONG if funding < threshold (default -0.03%)
+            
+        Returns:
+            True if trade should proceed, False if blocked
+        """
+        if action == 1 and funding < threshold:  # BUY with negative funding
+            logger.warning(
+                f"⚠️ Trade blocked: LONG with funding {funding*100:.4f}% < {threshold*100:.4f}% "
+                f"(longs pay {abs(funding)*100:.4f}% every 8h)"
+            )
+            return False
+        
+        # Optional: Block SHORT if funding >+0.03% (shorts pay longs)
+        if action == 2 and funding > abs(threshold):
+            logger.warning(
+                f"⚠️ Trade blocked: SHORT with funding {funding*100:.4f}% > +{abs(threshold)*100:.4f}%"
+            )
+            return False
+        
+        return True
+    
     def calculate_position_size(
         self,
         signal_strength: float,

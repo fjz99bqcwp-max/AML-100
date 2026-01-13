@@ -410,6 +410,74 @@ class DataFetcher:
         
         logger.info(f"Hybrid data: {len(real_df)} real + {len(synthetic_df)} synthetic = {len(hybrid_df)} total klines")
         return hybrid_df
+    
+    async def fetch_wallet_fills(
+        self, 
+        wallet: str = "0x12045C1Cc410461B24e4293Dd05e2a6c47ebb584",
+        days: int = 30
+    ) -> pd.DataFrame:
+        """
+        Fetch real wallet fills from HyperLiquid for ultra-realistic training.
+        Uses HyperLiquid SDK to get actual user fills.
+        """
+        try:
+            from hyperliquid.info import Info
+            from hyperliquid.utils import constants
+        except ImportError:
+            logger.error("❌ hyperliquid-python-sdk not installed: pip install hyperliquid-python-sdk")
+            return pd.DataFrame()
+        
+        info = Info(constants.MAINNET_API_URL, skip_ws=True)
+        end_time = int(time.time() * 1000)
+        start_time = end_time - (days * 24 * 60 * 60 * 1000)
+        
+        fills = []
+        try:
+            user_fills = info.user_fills(wallet)
+            
+            for fill in user_fills:
+                if fill['time'] >= start_time:
+                    fills.append({
+                        "timestamp": fill['time'] / 1000,
+                        "symbol": fill['coin'],
+                        "side": fill['side'],
+                        "price": float(fill['px']),
+                        "size": float(fill['sz']),
+                        "fee": float(fill.get('fee', 0)),
+                        "closed_pnl": float(fill.get('closedPnl', 0)),
+                        "is_maker": fill.get('maker', False)
+                    })
+            
+            logger.info(f"✅ Fetched {len(fills)} wallet fills from {wallet[:10]}... (last {days} days)")
+            return pd.DataFrame(fills)
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to fetch wallet fills: {type(e).__name__}: {e}")
+            return pd.DataFrame()
+    
+    async def generate_wallet_hybrid_data(
+        self, 
+        wallet: str = "0x12045C1Cc410461B24e4293Dd05e2a6c47ebb584",
+        days: int = 180
+    ) -> pd.DataFrame:
+        """
+        Generate hybrid data with 90% wallet fills + 10% synthetic.
+        Most realistic training data - learns actual HyperLiquid execution patterns.
+        """
+        wallet_df = await self.fetch_wallet_fills(wallet=wallet, days=days)
+        
+        if wallet_df.empty or len(wallet_df) < 1000:
+            logger.warning(f"⚠️ Insufficient wallet data ({len(wallet_df)} fills), falling back to SPX hybrid")
+            return await self.generate_hybrid_data(days, real_weight=0.7)
+        
+        # Supplement with synthetic (10%)
+        synthetic_df = self.generate_synthetic_spx(days=int(days * 0.1))
+        
+        # Merge and sort by timestamp
+        hybrid = pd.concat([wallet_df, synthetic_df], ignore_index=True).sort_values("timestamp").reset_index(drop=True)
+        
+        logger.info(f"💎 Wallet hybrid: {len(wallet_df)} real fills + {len(synthetic_df)} synthetic = {len(hybrid)} total")
+        return hybrid
 
     def _add_equity_perp_features(self, df):
         """

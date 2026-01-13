@@ -1,54 +1,53 @@
 {
     "trading": {
-        "take_profit_pct": 0.3,
-        "stop_loss_pct": 0.15,
-        "position_size_pct": 0.4,
+        "take_profit_pct": 0.2,
+        "stop_loss_pct": 0.1,
+        "position_size_pct": 0.45,
         "max_positions": 1,
         "leverage": 1,
         "max_leverage": 20,
         "order_type": "limit",
         "slippage_tolerance_pct": 0.05,
-        "signal_threshold": 0.0002,
-        "min_q_diff": 0.0002,
-        "min_take_profit_pct": 0.1,
-        "min_stop_loss_pct": 0.05,
+        "signal_threshold": 0.0001,
+        "min_q_diff": 0.0001,
+        "min_take_profit_pct": 0.05,
+        "min_stop_loss_pct": 0.03,
         "min_position_size_pct": 0.05,
         "tp_mult": 2.0,
         "sl_mult": 0.5,
-        "trailing_sl_pct": 0.08,
-        "trailing_sl_trigger_pct": 0.1,
+        "trailing_sl_pct": 0.05,
+        "trailing_sl_trigger_pct": 0.08,
         "dynamic_tp_sl": true,
         "vol_scaling": true,
         "force_min_size_btc": 0.001,
-        "max_hold_signals_before_force": 5,
+        "max_hold_signals_before_force": 3,
         "force_trade_after_holds": true,
-        "force_trade_strength": 0.7,
-        "max_hold_seconds": 60,
+        "force_trade_strength": 0.8,
+        "max_hold_seconds": 45,
         "force_exit_after_hold_timeout": true,
         "hft_mode": true,
-        "target_hold_seconds": 30,
-        "scalp_tp_pct": 0.5,
-        "scalp_sl_pct": 0.25,
-        "micro_tp_pct": 0.1,
-        "micro_sl_pct": 0.05
+        "target_hold_seconds": 20,
+        "scalp_tp_pct": 0.2,
+        "scalp_sl_pct": 0.1,
+        "micro_tp_pct": 0.15,
+        "micro_sl_pct": 0.08
     },
     "ml_model": {
         "type": "hybrid_lstm_dqn",
         "lstm_hidden_size": 64,
         "lstm_num_layers": 1,
         "dqn_hidden_size": 256,
-        "enable_torch_compile": true,
         "learning_rate": 0.0008869487725367716,
         "batch_size": 32,
         "epochs": 50,
         "sequence_length": 60,
         "gamma": 0.99,
         "epsilon_start": 1.0,
-        "epsilon_end": 0.01,
-        "epsilon_decay": 0.99,
+        "epsilon_end": 0.005,
+        "epsilon_decay": 0.995,
         "memory_size": 10000,
         "target_update_freq": 10,
-        "dropout": 0.2,
+        "dropout": 0.15,
         "early_stop_patience": 15,
         "min_reward_delta": 0.005,
         "reward_threshold_stop": -0.5,
@@ -78,85 +77,28 @@
         "entropy_bonus": 0.08,
         "hold_penalty_live": 0.15,
         "min_action_pct": 0.35,
+        "enable_torch_compile": true,
         "reward": {
             "alpha_sharpe": 0.7,
-            "beta_trade_penalty": 0.005,
+            "beta_trade_penalty": 0.003,
             "early_bonus_epochs": 10,
             "early_bonus_amount": 0.5,
-            "hold_penalty": 0.25,
-            "hold_timeout_penalty": 1.0,
-            "hold_timeout_seconds": 60,
+            "hold_penalty": 0.3,
+            "hold_timeout_penalty": 1.2,
+            "hold_timeout_seconds": 45,
             "commission_rate": 0.0005,
             "min_trade_reward": -0.3,
             "max_trade_reward": 2.0,
             "diversity_penalty": 0.25,
             "correct_direction_bonus": 0.6,
             "log_scale_threshold": 0.3,
-            "trade_bonus": 0.5,
-            "consecutive_trade_bonus": 0.05,
+            "trade_bonus": 0.6,
+            "consecutive_trade_bonus": 0.06,
             "positive_bias": 0.3,
             "kelly_weight": 0.3,
             "return_alpha": 0.8
         },
         "data_days": 180
-    },
-    "features": {
-        "orderbook_levels": 10,
-        "kline_intervals": [
-            "1m",
-            "5m",
-            "15m"
-        ],
-        "indicators": [
-            "rsi",
-            "macd",
-            "bollinger",
-            "vwap",
-            "atr"
-        ],
-        "lookback_periods": {
-            "short": 14,
-            "medium": 50,
-            "long": 200
-        }
-    },
-    "optimization": {
-        "method": "bayesian",
-        "max_iterations": 50,
-        "convergence_threshold": 0.001,
-        "param_bounds": {
-            "take_profit_pct": [
-                1.0,
-                5.0
-            ],
-            "stop_loss_pct": [
-                0.4,
-                2.0
-            ],
-            "position_size_pct": [
-                0.15,
-                0.5
-            ],
-            "learning_rate": [
-                0.0001,
-                0.003
-            ],
-            "signal_threshold": [
-                0.0001,
-                0.005
-            ]
-        }
-    },
-    "risk": {
-        "kelly_fraction": 0.25,
-        "volatility_lookback": 20,
-        "max_daily_loss_pct": 2.0,
-        "max_correlation": 0.8,
-        "var_confidence": 0.95,
-        "growth_factor": 1.35,
-        "xyz100_leverage_cap": 20,
-        "high_vol_position_reduction": 0.5,
-        "high_vol_threshold": 0.03
     },
     "backtest": {
         "days": 180,
@@ -171,17 +113,6 @@
         "memory_cleanup_freq": 10,
         "enable_debug_logging": true,
         "max_workers": 8,
-        "min_trades_threshold": 50
-    },
-    "api_optimization": {
-        "poll_interval_sec": 15,
-        "use_websocket_orderbook": true,
-        "use_websocket_user_events": true,
-        "cache_ttl_user_state": 10.0,
-        "cache_ttl_orderbook": 3.0,
-        "cache_ttl_positions": 10.0,
-        "max_calls_per_minute": 15,
-        "batch_signals": true,
-        "batch_size": 5
+        "min_trades_threshold": 100
     }
 }

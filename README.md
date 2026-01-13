@@ -98,12 +98,21 @@ source .venv/bin/activate
 caffeinate python AML-100.py
 
 # Or with specific options
-python AML-100.py --backtest --days 30           # Backtest only
+python AML-100.py --backtest --days 180          # Backtest only (180-day)
+python AML-100.py --backtest --data hybrid --days 180  # Hybrid real+synthetic
 python AML-100.py --backtest --data spx          # Backtest with SPX data
 python AML-100.py --backtest --data synthetic    # Backtest with synthetic data
 python AML-100.py --hft                          # HFT mode (tighter TP/SL)
 python AML-100.py --train --epochs 50            # Training only
 python AML-100.py --optimize --trials 100        # Optimization only
+python AML-100.py --live --paper                 # Paper trading (live data, fake execution)
+
+# Advanced: Ultra-HFT mode (micro-scalping)
+cp config/params_ultra_hft.json config/params.json
+python AML-100.py --backtest --data hybrid --days 180
+
+# Monitoring with Streamlit dashboard
+streamlit run monitoring/dashboard_streamlit.py
 ```
 
 ## Project Structure
