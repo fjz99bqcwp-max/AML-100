@@ -392,9 +392,10 @@ class AMLHFTSystem:
                         with torch.no_grad():
                             action, confidence, q_values = self._ml_model.predict(feature_seq)
                         
-                        # RSI fallback logic
+                        # RSI fallback logic with lower threshold for HFT
+                        signal_threshold = self.params["trading"]["signal_threshold"]
                         q_diff = np.max(q_values) - np.min(q_values)
-                        if q_diff < 0.08:
+                        if q_diff < signal_threshold:
                             if "rsi" in df.columns and not pd.isna(df.iloc[i]["rsi"]):
                                 rsi = df.iloc[i]["rsi"]
                                 if rsi < 38:
@@ -498,6 +499,24 @@ class AMLHFTSystem:
             else:
                 monthly_projection = 0
             metrics["monthly_projection"] = monthly_projection
+            
+            # TRADE DENSITY CHECK: Halt if insufficient trading activity
+            min_trades_threshold = backtest_cfg.get("min_trades_threshold", 50)
+            trade_density = (len(all_trades) / max(total_rows - seq_len, 1)) * 100
+            metrics["trade_density_pct"] = trade_density
+            
+            if len(all_trades) < min_trades_threshold:
+                logger.error(f"❌ TRADE DENSITY FAILURE: {len(all_trades)} trades < {min_trades_threshold} threshold")
+                logger.error(f"   Trade density: {trade_density:.4f}% (target: >0.1%)")
+                logger.error(f"   System is HOLDing {100-trade_density:.2f}% of the time - CRITICAL")
+                logger.error(f"   Recommendations:")
+                logger.error(f"     1. Increase trade_bonus in params.json (current: {self.params['ml_model']['reward']['trade_bonus']})")
+                logger.error(f"     2. Lower signal_threshold (current: {self.params['trading']['signal_threshold']})")
+                logger.error(f"     3. Decrease epsilon_decay for faster exploitation (current: {self.params['ml_model']['epsilon_decay']})")
+                metrics["objectives_met"] = False
+                metrics["failure_reason"] = "insufficient_trades"
+            
+            # Log objectives check
             
             # Check objectives
             objectives_met = self._check_objectives(metrics)

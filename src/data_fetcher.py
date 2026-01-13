@@ -365,6 +365,51 @@ class DataFetcher:
         # Last resort: pure synthetic
         logger.warning("BTC also unavailable, using pure synthetic SPX")
         return self.generate_synthetic_spx(days)
+    
+    async def generate_hybrid_data(self, days: int = 180, real_weight: float = 0.7) -> pd.DataFrame:
+        """
+        Generate hybrid real+synthetic data for robust training.
+        Combines 70% real SPX data with 30% synthetic for data augmentation.
+        
+        Args:
+            days: Total days of data to generate
+            real_weight: Proportion of real data (0.7 = 70% real, 30% synthetic)
+        
+        Returns:
+            DataFrame with hybrid data sorted by timestamp
+        """
+        logger.info(f"Generating hybrid data: {real_weight*100:.0f}% real + {(1-real_weight)*100:.0f}% synthetic")
+        
+        # Fetch real SPX data
+        real_df = await self.fetch_spx_data(days)
+        
+        # Generate synthetic data
+        synthetic_days = max(int(days * (1 - real_weight)), 30)
+        synthetic_df = self.generate_synthetic_spx(synthetic_days)
+        
+        if real_df is None or len(real_df) < 1000:
+            logger.warning("Insufficient real SPX data, using 100% synthetic")
+            return self.generate_synthetic_spx(days)
+        
+        # Calculate actual samples
+        total_samples = days * 24 * 60  # 1-minute klines
+        real_samples = int(total_samples * real_weight)
+        synthetic_samples = total_samples - real_samples
+        
+        # Sample from real data
+        if len(real_df) > real_samples:
+            real_df = real_df.sample(n=real_samples, random_state=42).sort_values("timestamp")
+        
+        # Sample from synthetic
+        if len(synthetic_df) > synthetic_samples:
+            synthetic_df = synthetic_df.sample(n=synthetic_samples, random_state=43).sort_values("timestamp")
+        
+        # Merge and sort
+        hybrid_df = pd.concat([real_df, synthetic_df], ignore_index=True)
+        hybrid_df = hybrid_df.sort_values("timestamp").reset_index(drop=True)
+        
+        logger.info(f"Hybrid data: {len(real_df)} real + {len(synthetic_df)} synthetic = {len(hybrid_df)} total klines")
+        return hybrid_df
 
     def _add_equity_perp_features(self, df):
         """

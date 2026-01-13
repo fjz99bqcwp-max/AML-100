@@ -709,29 +709,64 @@ class MLModel:
             
             self._consecutive_holds += 1
             
-            # Escalating penalty for repeated holds
-            hold_multiplier = 1.0 + (self._consecutive_holds * 0.1)  # 10% increase per consecutive hold
-            missed_opportunity = abs(price_change_pct) * 0.8
-            base_reward = -(cfg.hold_penalty + missed_opportunity) * status_scale * 1.5 * hold_multiplier
+            # TIMEOUT PENALTY: Severe penalty for HOLD >60s (HFT should act fast)
+            hold_timeout_seconds = cfg.get('hold_timeout_seconds', 60)
+            hold_timeout_penalty = cfg.get('hold_timeout_penalty', 1.0)
+            
+            if self._consecutive_holds > hold_timeout_seconds:
+                base_reward = -hold_timeout_penalty * status_scale
+            else:
+                # Escalating penalty for repeated holds
+                hold_multiplier = 1.0 + (self._consecutive_holds * 0.15)  # 15% increase per consecutive hold
+                missed_opportunity = abs(price_change_pct) * 0.8
+                base_reward = -(cfg.hold_penalty + missed_opportunity) * status_scale * 1.5 * hold_multiplier
         elif action == self.BUY:
             # Reset consecutive holds on trade
             self._consecutive_holds = 0
+            
+            # CONSECUTIVE TRADE BONUS: Reward profitable streaks
+            if not hasattr(self, '_last_trade_profitable'):
+                self._last_trade_profitable = False
+            if not hasattr(self, '_consecutive_profitable_trades'):
+                self._consecutive_profitable_trades = 0
             
             # Long position: profit from price increase
             # Use log scaling for more stable gradients
             if price_change_pct > 0:
                 base_reward = np.log1p(price_change_pct * 100) / 100 - cfg.commission_rate
+                # Track profitable streak
+                if self._last_trade_profitable:
+                    self._consecutive_profitable_trades += 1
+                else:
+                    self._consecutive_profitable_trades = 1
+                self._last_trade_profitable = True
             else:
                 base_reward = price_change_pct - cfg.commission_rate
+                self._last_trade_profitable = False
+                self._consecutive_profitable_trades = 0
         else:  # SELL
             # Reset consecutive holds on trade
             self._consecutive_holds = 0
             
+            # CONSECUTIVE TRADE BONUS: Reward profitable streaks
+            if not hasattr(self, '_last_trade_profitable'):
+                self._last_trade_profitable = False
+            if not hasattr(self, '_consecutive_profitable_trades'):
+                self._consecutive_profitable_trades = 0
+            
             # Short position: profit from price decrease  
             if price_change_pct < 0:
                 base_reward = np.log1p(-price_change_pct * 100) / 100 - cfg.commission_rate
+                # Track profitable streak
+                if self._last_trade_profitable:
+                    self._consecutive_profitable_trades += 1
+                else:
+                    self._consecutive_profitable_trades = 1
+                self._last_trade_profitable = True
             else:
                 base_reward = -price_change_pct - cfg.commission_rate
+                self._last_trade_profitable = False
+                self._consecutive_profitable_trades = 0
         
         # Kelly-weighted returns (Step 2: incorporate Kelly criterion)
         kelly_multiplier = 1.0 + cfg.kelly_weight * (1.0 if base_reward > 0 else 0.5)
@@ -795,6 +830,12 @@ class MLModel:
             else:
                 return_bonus = -return_alpha * 0.2 * np.log1p(abs(price_change_pct) * 100)  # Step 3: Reduced loss penalty
         
+        # CONSECUTIVE STREAK BONUS: Exponential reward for winning streaks
+        streak_bonus = 0.0
+        if action != self.HOLD and hasattr(self, '_consecutive_profitable_trades'):
+            consecutive_trade_bonus = getattr(cfg, 'consecutive_trade_bonus', 0.05)
+            streak_bonus = consecutive_trade_bonus * self._consecutive_profitable_trades
+        
         # Combine all components
         total_reward = (
             base_reward 
@@ -806,6 +847,7 @@ class MLModel:
             + return_bonus  # Step 1: Return-weighted bonus
             + buy_balance_bonus  # Step 2: BUY bias for balance
             + vol_regime_bonus  # Step 3: Volatility trading bonus
+            + streak_bonus  # HFT: Consecutive profitable trades bonus
             + cfg.positive_bias  # Positive shift to encourage positive rewards
         )
         

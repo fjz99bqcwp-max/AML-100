@@ -218,7 +218,7 @@ async def run_backtest_only(days: int = 30, data_source: str = "xyz100") -> None
     
     Args:
         days: Number of days of historical data
-        data_source: Data source - xyz100, spx, btc, or synthetic
+        data_source: Data source - xyz100, spx, btc, synthetic, or hybrid
     """
     from src.main import AMLHFTSystem
     system = AMLHFTSystem()
@@ -229,7 +229,10 @@ async def run_backtest_only(days: int = 30, data_source: str = "xyz100") -> None
         
         # Get appropriate data based on source
         historical_data = None
-        if data_source == "spx":
+        if data_source == "hybrid":
+            log_info(f"Generating hybrid data (70% real SPX + 30% synthetic, {days} days)")
+            historical_data = await system._data_fetcher.generate_hybrid_data(days, real_weight=0.7)
+        elif data_source == "spx":
             log_info("Using SPX fallback data for backtest")
             historical_data = await system._data_fetcher.get_fallback_data(days)
         elif data_source == "synthetic":
@@ -425,9 +428,9 @@ Examples:
     parser.add_argument(
         "--data",
         type=str,
-        choices=["xyz100", "spx", "btc", "synthetic"],
+        choices=["xyz100", "spx", "btc", "synthetic", "hybrid"],
         default="xyz100",
-        help="Data source for backtest: xyz100 (default), spx, btc, or synthetic"
+        help="Data source for backtest: xyz100 (default), spx, btc, synthetic, or hybrid (70%% real+30%% synthetic)"
     )
     parser.add_argument(
         "--hft",

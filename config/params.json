@@ -1,15 +1,15 @@
 {
     "trading": {
-        "take_profit_pct": 2.884053392758609,
-        "stop_loss_pct": 1.6795882624445462,
-        "position_size_pct": 0.3419188330521181,
+        "take_profit_pct": 0.3,
+        "stop_loss_pct": 0.15,
+        "position_size_pct": 0.4,
         "max_positions": 1,
         "leverage": 1,
         "max_leverage": 20,
         "order_type": "limit",
         "slippage_tolerance_pct": 0.05,
-        "signal_threshold": 0.0005,
-        "min_q_diff": 0.002,
+        "signal_threshold": 0.0002,
+        "min_q_diff": 0.0002,
         "min_take_profit_pct": 0.1,
         "min_stop_loss_pct": 0.05,
         "min_position_size_pct": 0.05,
@@ -43,8 +43,8 @@
         "sequence_length": 60,
         "gamma": 0.99,
         "epsilon_start": 1.0,
-        "epsilon_end": 0.05,
-        "epsilon_decay": 0.97,
+        "epsilon_end": 0.01,
+        "epsilon_decay": 0.99,
         "memory_size": 10000,
         "target_update_freq": 10,
         "dropout": 0.2,
@@ -56,7 +56,7 @@
         "use_lr_scheduler": true,
         "lr_scheduler_patience": 3,
         "lr_scheduler_factor": 0.2,
-        "num_workers": 4,
+        "num_workers": 6,
         "pin_memory": true,
         "sample_ratio": 0.1,
         "train_batches_per_epoch": 15,
@@ -78,22 +78,25 @@
         "min_action_pct": 0.35,
         "reward": {
             "alpha_sharpe": 0.7,
-            "beta_trade_penalty": 0.01,
+            "beta_trade_penalty": 0.005,
             "early_bonus_epochs": 10,
             "early_bonus_amount": 0.5,
-            "hold_penalty": 0.15,
+            "hold_penalty": 0.25,
+            "hold_timeout_penalty": 1.0,
+            "hold_timeout_seconds": 60,
             "commission_rate": 0.0005,
             "min_trade_reward": -0.3,
             "max_trade_reward": 2.0,
             "diversity_penalty": 0.25,
             "correct_direction_bonus": 0.6,
             "log_scale_threshold": 0.3,
-            "trade_bonus": 0.15,
+            "trade_bonus": 0.5,
+            "consecutive_trade_bonus": 0.05,
             "positive_bias": 0.3,
             "kelly_weight": 0.3,
             "return_alpha": 0.8
         },
-        "data_days": 90
+        "data_days": 180
     },
     "features": {
         "orderbook_levels": 10,
@@ -154,7 +157,7 @@
         "high_vol_threshold": 0.03
     },
     "backtest": {
-        "days": 90,
+        "days": 180,
         "slippage_pct": 0.05,
         "latency_ms_min": 5,
         "latency_ms_max": 15,
@@ -164,7 +167,9 @@
         "xyz100_vol_factor": 1.2,
         "chunk_size": 5000,
         "memory_cleanup_freq": 10,
-        "enable_debug_logging": true
+        "enable_debug_logging": true,
+        "max_workers": 8,
+        "min_trades_threshold": 50
     },
     "api_optimization": {
         "poll_interval_sec": 15,

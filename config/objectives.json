@@ -1,8 +1,8 @@
 {
-    "monthly_performance_min": 8,
-    "monthly_performance_max": 20,
+    "monthly_performance_min": 10,
+    "monthly_performance_max": 25,
     "profit_factor_min": 1.2,
-    "sharpe_ratio_min": 1.0,
+    "sharpe_ratio_min": 1.2,
     "risk_reward": "variable",
     "win_rate": "variable",
     "drawdown_max": 5,
