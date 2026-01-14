@@ -1,17 +1,17 @@
 {
   "trading": {
-    "take_profit_pct": 99.0,
-    "stop_loss_pct": 99.0,
-    "position_size_pct": 50.0,
+    "take_profit_pct": 0.4,
+    "stop_loss_pct": 0.25,
+    "position_size_pct": 30.296003284424003,
     "max_positions": 1,
-    "leverage": 1,
+    "leverage": 5,
     "max_leverage": 20,
     "order_type": "limit",
     "slippage_tolerance_pct": 0.05,
-    "signal_threshold": 0.005,
-    "min_q_diff": 0.02,
-    "min_take_profit_pct": 99.0,
-    "min_stop_loss_pct": 99.0,
+    "signal_threshold": 1e-05,
+    "min_q_diff": 0.0005,
+    "min_take_profit_pct": 0.15,
+    "min_stop_loss_pct": 0.08,
     "min_position_size_pct": 0.05,
     "tp_mult": 1.0,
     "sl_mult": 1.0,
@@ -26,11 +26,15 @@
     "max_hold_seconds": 3600,
     "force_exit_after_hold_timeout": true,
     "hft_mode": true,
-    "target_hold_seconds": 3600,
-    "scalp_tp_pct": 0.5,
-    "scalp_sl_pct": 0.25,
-    "micro_tp_pct": 0.1,
-    "micro_sl_pct": 0.05
+    "target_hold_seconds": 1800,
+    "scalp_tp_pct": 0.15,
+    "scalp_sl_pct": 0.08,
+    "micro_tp_pct": 0.08,
+    "micro_sl_pct": 0.04,
+    "rsi_oversold": 30,
+    "rsi_overbought": 70,
+    "adx_trend_threshold": 25,
+    "momentum_threshold": 0.3
   },
   "ml_model": {
     "type": "hybrid_lstm_dqn",
@@ -38,14 +42,14 @@
     "lstm_num_layers": 1,
     "dqn_hidden_size": 256,
     "enable_torch_compile": true,
-    "learning_rate": 0.0024825022471346016,
+    "learning_rate": 0.0017881320790207535,
     "batch_size": 32,
     "epochs": 50,
     "sequence_length": 60,
     "gamma": 0.99,
     "epsilon_start": 1.0,
-    "epsilon_end": 0.01,
-    "epsilon_decay": 0.99,
+    "epsilon_end": 0.05,
+    "epsilon_decay": 0.9995,
     "memory_size": 10000,
     "target_update_freq": 10,
     "dropout": 0.2,
@@ -60,8 +64,9 @@
     "num_workers": 8,
     "pin_memory": true,
     "persistent_workers": true,
-    "sample_ratio": 0.1,
-    "train_batches_per_epoch": 15,
+    "prefetch_factor": 2,
+    "sample_ratio": 0.15,
+    "train_batches_per_epoch": 20,
     "supervised_gamma": 0.2,
     "supervised_gamma_critical": 0.5,
     "use_supervised_guidance": true,
@@ -83,20 +88,22 @@
       "beta_trade_penalty": 0.005,
       "early_bonus_epochs": 10,
       "early_bonus_amount": 0.5,
-      "hold_penalty": 0.05,
-      "hold_timeout_penalty": 0.5,
+      "hold_penalty": 0.5,
+      "hold_timeout_penalty": 2.0,
       "hold_timeout_seconds": 30,
       "commission_rate": 0.0005,
-      "min_trade_reward": -0.3,
-      "max_trade_reward": 3.0,
-      "diversity_penalty": 0.3,
-      "correct_direction_bonus": 2.0,
+      "min_trade_reward": -0.4,
+      "max_trade_reward": 3.5,
+      "diversity_penalty": 0.4,
+      "correct_direction_bonus": 2.5,
       "log_scale_threshold": 0.5,
-      "trade_bonus": 0.8,
-      "consecutive_trade_bonus": 0.3,
-      "positive_bias": 0.2,
+      "trade_bonus": 5.0,
+      "consecutive_trade_bonus": 1.0,
+      "positive_bias": 0.25,
       "kelly_weight": 0.3,
-      "return_alpha": 2.0
+      "return_alpha": 2.0,
+      "vol_bonus_high": 0.3,
+      "vol_bonus_moderate": 0.15
     },
     "data_days": 180
   },
@@ -126,16 +133,16 @@
     "convergence_threshold": 0.001,
     "param_bounds": {
       "take_profit_pct": [
-        99.0,
-        99.0
+        0.3,
+        1.5
       ],
       "stop_loss_pct": [
-        99.0,
-        99.0
+        0.15,
+        0.8
       ],
       "position_size_pct": [
-        50.0,
-        50.0
+        30.0,
+        70.0
       ],
       "learning_rate": [
         0.001,
@@ -144,6 +151,14 @@
       "signal_threshold": [
         0.001,
         0.01
+      ],
+      "rsi_oversold": [
+        20,
+        35
+      ],
+      "rsi_overbought": [
+        65,
+        80
       ]
     }
   },
@@ -159,20 +174,24 @@
     "high_vol_threshold": 0.03
   },
   "backtest": {
-    "days": 180,
-    "slippage_pct": 0.05,
-    "latency_ms_min": 5,
-    "latency_ms_max": 15,
+    "days": 365,
+    "slippage_pct": 0.015,
+    "latency_ms_min": 1,
+    "latency_ms_max": 3,
     "commission_pct": 0.0005,
-    "market_impact_pct": 0.01,
+    "market_impact_pct": 0.005,
     "use_compound_returns": true,
-    "xyz100_vol_factor": 1.2,
-    "chunk_size": 10000,
-    "memory_cleanup_freq": 5,
+    "xyz100_vol_factor": 1.25,
+    "chunk_size": 8000,
+    "memory_cleanup_freq": 8,
     "enable_debug_logging": false,
-    "enable_multiprocessing": false,
-    "max_workers": 9,
-    "min_trades_threshold": 50
+    "enable_multiprocessing": true,
+    "max_workers": 8,
+    "min_trades_threshold": 180,
+    "enable_monte_carlo": true,
+    "monte_carlo_paths": 500,
+    "simulate_funding": true,
+    "funding_rate_hourly": 0.000125
   },
   "api_optimization": {
     "poll_interval_sec": 15,
@@ -184,5 +203,15 @@
     "max_calls_per_minute": 15,
     "batch_signals": true,
     "batch_size": 5
+  },
+  "param_bounds": {
+    "take_profit_pct": [
+      0.2,
+      0.8
+    ],
+    "stop_loss_pct": [
+      0.15,
+      0.4
+    ]
   }
 }

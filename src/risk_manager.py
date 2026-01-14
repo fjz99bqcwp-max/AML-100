@@ -392,35 +392,97 @@ class RiskManager:
             logger.error(f"Error calculating position heat: {e}")
             return 0.0
     
-    def calculate_dynamic_leverage(self, sharpe_30d: float) -> int:
+    def calculate_dynamic_leverage(self, sharpe_30d: float, current_vol: float = 0.01) -> int:
         """
-        Dynamic leverage scaling based on 30-day rolling Sharpe ratio.
-        Conservative (1x) → Aggressive (15x) based on strategy performance.
+        Dynamic leverage scaling (5x-20x) based on 30-day Sharpe and volatility.
         
         Args:
-            sharpe_30d: Rolling 30-day Sharpe ratio
-            
+            sharpe_30d: 30-day rolling Sharpe ratio
+            current_vol: Current daily volatility (default 1%)
+        
         Returns:
-            Leverage multiplier (1-15x)
+            Leverage multiplier (5-20)
         """
+        base_leverage = 5
         max_leverage = self.params["trading"].get("max_leverage", 20)
         
-        # Sharpe-based leverage tiers
+        # Sharpe-based leverage scaling
         if sharpe_30d >= 2.0:
-            leverage = 15  # Exceptional performance
+            leverage = 20  # Excellent performance
+        elif sharpe_30d >= 1.8:
+            leverage = 15
         elif sharpe_30d >= 1.5:
-            leverage = 12  # Strong performance
+            leverage = 10
         elif sharpe_30d >= 1.0:
-            leverage = 8   # Moderate performance
-        elif sharpe_30d >= 0.5:
-            leverage = 5   # Defensive
+            leverage = 7
         else:
-            leverage = 1   # Crisis mode
+            leverage = base_leverage  # Conservative default
         
-        leverage = min(leverage, max_leverage)
+        # Volatility adjustment: reduce leverage in high vol
+        high_vol_threshold = self.risk_config.get("high_vol_threshold", 0.03)
+        if current_vol > high_vol_threshold:
+            vol_reduction = self.risk_config.get("high_vol_position_reduction", 0.5)
+            leverage = int(leverage * (1 - vol_reduction))
         
-        logger.info(f"⚙️ Dynamic leverage: Sharpe30d={sharpe_30d:.2f} → {leverage}x (max={max_leverage}x)")
+        # Clamp to bounds
+        leverage = max(base_leverage, min(max_leverage, leverage))
+        
+        logger.info(f"Dynamic leverage: {leverage}x (Sharpe={sharpe_30d:.2f}, Vol={current_vol*100:.2f}%)")
         return leverage
+    
+    def calculate_trailing_stop(
+        self,
+        entry_price: float,
+        current_price: float,
+        side: str,
+        unrealized_pnl_pct: float
+    ) -> Optional[float]:
+        """
+        Calculate trailing stop-loss that activates at 0.15% profit and trails by 0.08%.
+        
+        Args:
+            entry_price: Position entry price
+            current_price: Current market price
+            side: 'long' or 'short'
+            unrealized_pnl_pct: Current unrealized PnL percentage
+        
+        Returns:
+            Trailing stop price, or None if not activated
+        """
+        activation_threshold = 0.15  # Activate at 0.15% profit
+        trail_distance = 0.08  # Trail by 0.08%
+        
+        if unrealized_pnl_pct < activation_threshold:
+            return None  # Not profitable enough to activate
+        
+        if side == 'long':
+            # Trail below current price
+            trailing_stop = current_price * (1 - trail_distance / 100)
+        else:  # short
+            # Trail above current price
+            trailing_stop = current_price * (1 + trail_distance / 100)
+        
+        logger.debug(f"Trailing stop activated: {trailing_stop:.2f} (PnL={unrealized_pnl_pct:.2f}%)")
+        return trailing_stop
+    
+    async def _calculate_position_heat(self) -> float:
+        """Calculate percentage of capital at risk in positions"""
+        try:
+            positions = await self.api.get_positions()
+            
+            total_risk = 0.0
+            for pos in positions:
+                if pos.size != 0:
+                    # Risk = position value * estimated max loss (SL)
+                    sl_pct = self.params["trading"]["stop_loss_pct"] / 100
+                    position_value = abs(pos.size * pos.entry_price)
+                    total_risk += position_value * sl_pct
+            
+            return (total_risk / self.current_capital * 100) if self.current_capital > 0 else 0.0
+            
+        except Exception as e:
+            logger.error(f"Error calculating position heat: {e}")
+            return 0.0
     
     async def check_funding_rate(self, symbol: str = "XYZ100") -> float:
         """

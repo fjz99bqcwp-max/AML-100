@@ -146,6 +146,33 @@ def display_dashboard(data: dict, api: HyperliquidAPI, next_refresh: float):
         print(f"{Colors.RED}Error fetching data: {data['error']}{Colors.RESET}")
         return
     
+    # TRADE DENSITY ALERT SECTION (NEW)
+    fills = data.get("fills", [])
+    if fills and len(fills) > 0:
+        # Calculate trades per hour from recent fills
+        # Note: Trade objects have timestamp attribute (in seconds), not "time" key
+        recent_fills = [f for f in fills if time.time() - getattr(f, 'timestamp', 0) < 3600]
+        trades_per_hour = len(recent_fills)
+        
+        print(f"{Colors.BOLD}🚨 Trade Density Monitor{Colors.RESET}")
+        print("-" * 40)
+        
+        # Alert thresholds
+        if trades_per_hour < 3:
+            alert_color = Colors.RED
+            alert_msg = "CRITICAL: Very low activity"
+        elif trades_per_hour < 5:
+            alert_color = Colors.YELLOW
+            alert_msg = "WARNING: Below target"
+        else:
+            alert_color = Colors.GREEN
+            alert_msg = "GOOD: Active trading"
+        
+        print(f"  Trades/Hour:      {alert_color}{trades_per_hour} {alert_msg}{Colors.RESET}")
+        print(f"  Target:           5+ trades/hour")
+        print(f"  Last 10 fills:    {min(len(fills), 10)} trades")
+        print()
+    
     state = data["state"]
     if state:
         # Account Summary

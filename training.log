@@ -1,0 +1,50 @@
+✅ Loaded environment from /Users/nheosdisplay/VSC/AML/AML-100/.env
+[2m[2026-01-14 19:13:08][0m ℹ️  [96mHFT mode enabled: RSI mean reversion with 60-bar time exit[0m
+
+[1m[96m════════════════════════════════════════════════════════════[0m
+[1m[96m  AML-100 HFT - Machine Learning Autonomous Trading System[0m
+[1m[96m  Hyperliquid XYZ100-USDC[0m
+[1m[96m════════════════════════════════════════════════════════════[0m
+  [2mStarted:[0m  [97m2026-01-14 19:13:08 UTC[0m
+  [2mMode:[0m     [97mFull Autonomous[0m
+  [2mData:[0m     [97mXYZ100[0m
+  [2mHFT:[0m      [97mENABLED[0m
+  [2mLog:[0m      [97mINFO[0m
+[1m[96m════════════════════════════════════════════════════════════[0m
+
+[2m[2026-01-14 19:13:08][0m [1m[94m▸ Pre-flight Checks[0m
+[2m[2026-01-14 19:13:08][0m [92m✓  Dependencies verified[0m
+[2m[2026-01-14 19:13:08][0m [92m✓  Environment configured[0m
+[2m[2026-01-14 19:13:08][0m [92m✓  All checks passed[0m
+
+[2m[2026-01-14 19:13:08][0m ℹ️  [96mRunning full autonomous mode[0m
+[2m2026-01-14 20:13:08[0m [92mINFO[0m     src.main             Configurations loaded
+[2m2026-01-14 20:13:08[0m [92mINFO[0m     src.main             Setting up AML HFT System...
+[2m2026-01-14 20:13:08[0m [92mINFO[0m     src.hyperliquid_api  ✅ Connected to Hyperliquid MAINNET
+[2m2026-01-14 20:13:08[0m [92mINFO[0m     src.hyperliquid_api  Initialized Hyperliquid API for wallet: 0x12045C1C...
+[2m2026-01-14 20:13:08[0m [92mINFO[0m     src.ml_model         Using MPS (Metal Performance Shaders) for acceleration
+[2m2026-01-14 20:13:08[0m [92mINFO[0m     src.risk_manager     Registered fill callback for real-time PnL tracking
+[2m2026-01-14 20:13:08[0m [92mINFO[0m     src.risk_manager     Risk manager initialized with $1,469.00
+[2m2026-01-14 20:13:08[0m [93mWARNING[0m  src.ml_model         Model file not found: models/best_model.pt
+[2m2026-01-14 20:13:08[0m [92mINFO[0m     src.main             System setup complete
+[2m2026-01-14 20:13:08[0m [92mINFO[0m     src.main             ============================================================
+[2m2026-01-14 20:13:08[0m [92mINFO[0m     src.main             Starting AML HFT Autonomous Trading System
+[2m2026-01-14 20:13:08[0m [92mINFO[0m     src.main             ============================================================
+[2m2026-01-14 20:13:08[0m [92mINFO[0m     src.main             ============================================================
+[2m2026-01-14 20:13:08[0m [92mINFO[0m     src.main             No properly trained model found - Training model first
+[2m2026-01-14 20:13:08[0m [92mINFO[0m     src.main             ============================================================
+[2m2026-01-14 20:13:08[0m [92mINFO[0m     src.main             Phase 0: Initial Model Training (180 days)
+[2m2026-01-14 20:13:08[0m [92mINFO[0m     src.main             Starting ML model training (days=180, append_live=False)...
+[2m2026-01-14 20:13:08[0m [92mINFO[0m     src.data_fetcher     Loaded cached training data from data/cache/training_60a77a544d6a.joblib
+[2m2026-01-14 20:13:08[0m [92mINFO[0m     src.main             Training data: 5037 samples (180 days)
+[2m2026-01-14 20:13:08[0m [92mINFO[0m     src.ml_model         Starting DQN training for 50 epochs
+[2m2026-01-14 20:13:08[0m [92mINFO[0m     src.ml_model         Early stopping: patience=30, min_delta=0.005
+[2m2026-01-14 20:13:09[0m [92mINFO[0m     src.ml_model         🚀 torch.compile() enabled - M4 optimized for <0.5ms inference
+[2m2026-01-14 20:13:09[0m [92mINFO[0m     src.ml_model         ✅ Model initialized: input_size=57, LSTM=64x1, compile=True
+[2m2026-01-14 20:13:09[0m [92mINFO[0m     src.ml_model         Initial learning rate: 0.001788
+[2m2026-01-14 20:13:10[0m [92mINFO[0m     src.ml_model         Model saved to models/best_model.pt
+[2m2026-01-14 20:13:10[0m [92mINFO[0m     src.ml_model         New best reward: -2.3862 - Model saved
+[2m2026-01-14 20:13:10[0m [92mINFO[0m     src.ml_model         Epoch 1/50 - Reward: -2.3862, Best: -2.3862, Epsilon: 0.9995, LR: 0.001788, Time: 0.94s, ETA: 0.8min
+[2m2026-01-14 20:13:10[0m [92mINFO[0m     src.ml_model         Model saved to models/best_model.pt
+[2m2026-01-14 20:13:10[0m [92mINFO[0m     src.ml_model         New best reward: 1.5745 - Model saved
+[2m2026-01-14 20:13:10[0m [92mINFO[0m     src.ml_model         Epoch 2/50 - Reward: 1.5745, Best: 1.5745, Epsilon: 0.9990, LR: 0.001788, Time: 0.25s, ETA: 0.5min

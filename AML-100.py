@@ -510,13 +510,13 @@ Examples:
         with open(params_path) as f:
             params = json.load(f)
         
-        # Enable HFT mode with RSI mean reversion settings
-        # Use time-based exit (60 bars) instead of TP/SL
+        # Enable HFT mode with scalping settings
+        # Use very tight TP/SL that can be hit within the holding period
         params["trading"]["hft_mode"] = True
-        params["trading"]["take_profit_pct"] = 99.0  # Disabled - use time exit
-        params["trading"]["stop_loss_pct"] = 99.0   # Disabled - use time exit
-        params["trading"]["max_hold_seconds"] = 3600  # 60 minutes (60 bars)
-        params["trading"]["target_hold_seconds"] = 3600
+        params["trading"]["take_profit_pct"] = 0.4   # 0.4% take profit (achievable in 60 bars)
+        params["trading"]["stop_loss_pct"] = 0.25    # 0.25% stop loss (1.6:1 R/R ratio)
+        params["trading"]["max_hold_seconds"] = 3600  # 60 minutes max hold
+        params["trading"]["target_hold_seconds"] = 1800  # Target 30 min hold for quick trades
         
         with open(params_path, "w") as f:
             json.dump(params, f, indent=2)

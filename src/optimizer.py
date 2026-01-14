@@ -428,35 +428,71 @@ class ParameterOptimizer:
         self,
         backtest_func: Callable,
         df=None,  # df is no longer used - backtest_func should already have it bound
-        n_trials: int = 50
+        n_trials: int = 50,
+        enable_multi_objective: bool = True
     ) -> OptimizationResult:
         """
-        Optimize parameters using backtest results
-        backtest_func should be a callable that takes params dict and returns metrics dict
+        Optimize parameters using backtest results with MULTI-OBJECTIVE support.
+        
+        Args:
+            backtest_func: Callable that takes params dict and returns metrics dict
+            df: Deprecated (kept for compatibility)
+            n_trials: Number of optimization trials
+            enable_multi_objective: If True, optimize for both returns AND trade density
         """
         def objective(params: Dict[str, Any]) -> float:
             # Run backtest with given parameters
             try:
                 metrics = backtest_func(params)  # Just pass params, df should be bound
                 
-                # Multi-objective scoring
-                sharpe = metrics.get("sharpe_ratio", 0)
-                profit_factor = metrics.get("profit_factor", 0)
-                max_dd = metrics.get("max_drawdown_pct", 100)
-                returns = metrics.get("total_return_pct", 0)
-                
-                # Penalty for exceeding drawdown limit
-                dd_limit = self.objectives.get("drawdown_max", 5)
-                dd_penalty = max(0, max_dd - dd_limit) * 0.5
-                
-                # Combined score (maximize)
-                score = (
-                    sharpe * 0.3 +
-                    min(profit_factor, 3) * 0.2 +  # Cap PF contribution
-                    returns * 0.3 +
-                    (100 - max_dd) * 0.2 -
-                    dd_penalty
-                )
+                if enable_multi_objective:
+                    # MULTI-OBJECTIVE: Sharpe + trade density + profit factor
+                    sharpe = metrics.get("sharpe_ratio", 0)
+                    profit_factor = metrics.get("profit_factor", 0)
+                    max_dd = metrics.get("max_drawdown_pct", 100)
+                    returns = metrics.get("total_return_pct", 0)
+                    trades = metrics.get("total_trades", 0)
+                    days = metrics.get("days", 180)
+                    
+                    # Trade density score (target: 1200 trades / 180 days)
+                    target_trades_per_day = 6.67
+                    actual_trades_per_day = trades / max(days, 1)
+                    density_score = min(actual_trades_per_day / target_trades_per_day, 1.0)
+                    
+                    # Penalty for exceeding drawdown limit
+                    dd_limit = self.objectives.get("drawdown_max", 5)
+                    dd_penalty = max(0, max_dd - dd_limit) * 0.5
+                    
+                    # Combined score with density weighting (35%)
+                    score = (
+                        sharpe * 0.25 +
+                        min(profit_factor, 3) * 0.15 +
+                        returns * 0.2 +
+                        density_score * 3.0 * 0.35 +  # Trade density (scaled to match range)
+                        (100 - max_dd) * 0.05 -
+                        dd_penalty
+                    )
+                    
+                    logger.debug(f"Multi-obj score: Sharpe={sharpe:.2f}, PF={profit_factor:.2f}, "
+                               f"Returns={returns:.2f}%, Density={density_score:.2f}, Score={score:.2f}")
+                    
+                else:
+                    # Single objective (legacy)
+                    sharpe = metrics.get("sharpe_ratio", 0)
+                    profit_factor = metrics.get("profit_factor", 0)
+                    max_dd = metrics.get("max_drawdown_pct", 100)
+                    returns = metrics.get("total_return_pct", 0)
+                    
+                    dd_limit = self.objectives.get("drawdown_max", 5)
+                    dd_penalty = max(0, max_dd - dd_limit) * 0.5
+                    
+                    score = (
+                        sharpe * 0.3 +
+                        min(profit_factor, 3) * 0.2 +
+                        returns * 0.3 +
+                        (100 - max_dd) * 0.2 -
+                        dd_penalty
+                    )
                 
                 return score
                 

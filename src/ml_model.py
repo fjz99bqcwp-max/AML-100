@@ -633,7 +633,14 @@ class MLModel:
             "bid_ask_spread_pct", "bid_side_pressure", "ask_side_pressure",
             "imbalance_ratio", "depth_ratio",
             # Step 3 v2: Funding and regime
-            "funding_proxy", "zscore_20", "zscore_50", "vol_regime"
+            "funding_proxy", "zscore_20", "zscore_50", "vol_regime",
+            # Equity-specific features (XYZ100)
+            "equity_vol_5", "equity_vol_20", "implied_vol_proxy",
+            "mean_revert_signal", "gap_pct", "gap_filled",
+            "trend_persistence", "volume_spike",
+            # Nasdaq/Tech correlation features (NEW)
+            "tech_momentum", "tech_vol_regime", "tech_reversal_signal",
+            "hour_of_day", "tech_open_hour", "tech_close_hour"
         ]
         
         # Filter to available columns
@@ -657,14 +664,15 @@ class MLModel:
         self,
         features: np.ndarray,
         prices: np.ndarray,
-        atr: Optional[np.ndarray] = None
+        atr: Optional[np.ndarray] = None,
+        forward_bars: int = 5  # Look-ahead for multi-bar returns
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]]:
-        """Create sequences for LSTM training"""
+        """Create sequences for LSTM training with configurable forward horizon"""
         seq_len = self.sequence_length
-        n_samples = len(features) - seq_len - 1
+        n_samples = len(features) - seq_len - forward_bars  # Account for look-ahead
         
         if n_samples <= 0:
-            raise ValueError(f"Not enough data for sequence length {seq_len}")
+            raise ValueError(f"Not enough data for sequence length {seq_len} and forward_bars {forward_bars}")
         
         X = np.zeros((n_samples, seq_len, features.shape[1]))
         y_prices = np.zeros(n_samples)
@@ -674,7 +682,8 @@ class MLModel:
         for i in range(n_samples):
             X[i] = features[i:i + seq_len]
             current_prices[i] = prices[i + seq_len - 1]
-            y_prices[i] = prices[i + seq_len]
+            # Use forward_bars look-ahead instead of just 1 bar
+            y_prices[i] = prices[i + seq_len - 1 + forward_bars]
             if atr is not None and atr_values is not None:
                 atr_values[i] = atr[i + seq_len - 1]
         
@@ -710,17 +719,25 @@ class MLModel:
         """
         cfg = self.reward_config
         
-        # VOLATILITY-ADAPTIVE TRADE BONUS: Scale by market regime
+        # VOLATILITY-ADAPTIVE TRADE BONUS: Scale by market regime (ENHANCED)
         base_trade_bonus = cfg.trade_bonus  # 0.5
-        if daily_vol > 0.02:  # High volatility (>2% daily)
+        vol_bonus = 0.0
+        if daily_vol > 0.03:  # Very high volatility (>3% daily)
+            trade_bonus = base_trade_bonus * 1.8  # Boost to 0.9
+            vol_multiplier = 1.5
+            vol_bonus = 0.3  # Strong bonus for volatile markets
+        elif daily_vol > 0.02:  # High volatility (>2% daily)
             trade_bonus = base_trade_bonus * 1.4  # Boost to 0.7
             vol_multiplier = 1.3
+            vol_bonus = 0.15  # Moderate bonus
         elif daily_vol < 0.005:  # Low volatility (<0.5%)
             trade_bonus = base_trade_bonus * 0.6  # Reduce to 0.3
             vol_multiplier = 0.8
+            vol_bonus = 0.0
         else:
             trade_bonus = base_trade_bonus
             vol_multiplier = 1.0
+            vol_bonus = 0.05  # Small baseline bonus
         
         # Status-based scaling (Critical retrains boost exploration)
         is_critical = status.lower() == "critical"
@@ -748,10 +765,10 @@ class MLModel:
             if self._consecutive_holds > hold_timeout_seconds:
                 base_reward = -hold_timeout_penalty * status_scale
             else:
-                # Escalating penalty for repeated holds
-                hold_multiplier = 1.0 + (self._consecutive_holds * 0.15)  # 15% increase per consecutive hold
-                missed_opportunity = abs(price_change_pct) * 0.8
-                base_reward = -(cfg.hold_penalty + missed_opportunity) * status_scale * 1.5 * hold_multiplier
+                # EXPONENTIAL penalty for repeated holds (break HOLD bias)
+                hold_multiplier = 1.2 ** self._consecutive_holds  # Exponential: 1.2, 1.44, 1.73, 2.07...
+                missed_opportunity = abs(price_change_pct) * 0.9  # Increased from 0.8
+                base_reward = -(cfg.hold_penalty + missed_opportunity) * status_scale * 2.0 * hold_multiplier
         elif action == self.BUY:
             # Reset consecutive holds on trade
             self._consecutive_holds = 0
@@ -788,7 +805,7 @@ class MLModel:
             
             # Short position: profit from price decrease  
             if price_change_pct < 0:
-                base_reward = np.log1p(-price_change_pct * 100) / 100 - cfg.commission_rate
+                base_reward = np.log1p(-price_change_pct * 100) / 100 - cfg.commission_rate + vol_bonus
                 # Track profitable streak
                 if self._last_trade_profitable:
                     self._consecutive_profitable_trades += 1
@@ -983,8 +1000,11 @@ class MLModel:
             if "rsi" in df.columns:
                 rsi_values = df["rsi"].values
         
+        # Use 10-bar forward horizon for training rewards
+        # This better matches holding periods (trades held for 10-60 bars)
+        forward_bars = self.ml_config.get("training_forward_bars", 10)
         X, current_prices, future_prices, atr_seq = self.create_sequences(
-            features, prices, atr_values
+            features, prices, atr_values, forward_bars=forward_bars
         )
         
         batch_size = self.ml_config.get("batch_size", 256)
@@ -1326,8 +1346,10 @@ class MLModel:
         if df is not None and "atr_pct" in df.columns:
             atr_values = df["atr_pct"].values
         
+        # Use 10-bar forward horizon for training rewards
+        forward_bars = self.ml_config.get("training_forward_bars", 10)
         X, current_prices, future_prices, atr_seq = self.create_sequences(
-            features, prices, atr_values
+            features, prices, atr_values, forward_bars=forward_bars
         )
         
         num_samples = len(X) - 1
@@ -2309,9 +2331,10 @@ class BacktestEnvironment:
         # (We subtracted notional at entry, now add it back with profit/loss)
         self.capital += notional + pnl
         
-        # DEBUG: Log ALL close operations
+        # DEBUG: Log ALL close operations with reason and bars held
         import logging
-        logging.getLogger(__name__).info(f"CLOSE: before={cap_before_close:.2f}, notional={notional:.2f}, pnl={pnl:.2f}, after={self.capital:.2f}, trade_num={len(self.trades)+1}")
+        bars_held = self.current_idx - self.entry_idx
+        logging.getLogger(__name__).info(f"CLOSE [{reason}]: bars={bars_held}, pnl={pnl:.2f}, pnl_pct={net_pnl_pct:.3f}%, trade_num={len(self.trades)+1}")
         
         self.trades.append({
             "entry_idx": self.entry_idx,
