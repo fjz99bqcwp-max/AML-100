@@ -245,8 +245,8 @@ class HyperliquidAPI:
         # Step 5: Circuit breaker for rate limit protection
         self._circuit_breaker = CircuitBreaker(
             max_failures=3,
-            reset_timeout=60.0,
-            half_open_timeout=30.0
+            reset_timeout=15.0,  # Reduced from 60s for faster fallback
+            half_open_timeout=10.0  # Reduced from 30s
         )
         
         # Track last request time for additional throttling
@@ -457,9 +457,9 @@ class HyperliquidAPI:
                         
                         await asyncio.sleep(wait_time)
                     elif response.status >= 500:
-                        # Server error - use exponential backoff up to 300s
+                        # Server error - use shorter backoff for faster fallback
                         text = await response.text()
-                        server_backoff = min(10 * (2 ** attempt), 300)  # Cap at 5min instead of 120s
+                        server_backoff = min(5 * (2 ** attempt), 30)  # Cap at 30s for faster fallback
                         logger.error(
                             f"Server error {response.status}: {text[:200]}, "
                             f"retrying in {server_backoff}s (attempt {attempt + 1})"
@@ -671,6 +671,10 @@ class HyperliquidAPI:
     async def get_meta(self) -> Dict[str, Any]:
         """Get exchange metadata including asset info"""
         payload = {"type": "meta"}
+        # Add dex parameter for XYZ perps
+        dex = self.config.get("hyperliquid", {}).get("dex")
+        if dex:
+            payload["dex"] = dex
         return await self._post_request(
             self.config["hyperliquid"]["info_url"],
             payload
@@ -699,28 +703,48 @@ class HyperliquidAPI:
             logger.error(f"Failed to get mid price for {symbol}: {e}")
             raise
     
-    async def get_orderbook(self, symbol: str = "BTC") -> OrderBook:
+    async def get_orderbook(self, symbol: str = "BTC") -> Optional[OrderBook]:
         """Get current orderbook snapshot with caching"""
-        cache_key = f"orderbook:{symbol}"
-        payload = {
-            "type": "l2Book",
-            "coin": symbol
-        }
-        
-        data = await self._cached_request(
-            cache_key,
-            self.config["hyperliquid"]["info_url"],
-            payload
-        )
-        
-        orderbook = OrderBook(
-            bids=[(float(b["px"]), float(b["sz"])) for b in data.get("levels", [[]])[0]],
-            asks=[(float(a["px"]), float(a["sz"])) for a in data.get("levels", [[], []])[1]],
-            timestamp=time.time()
-        )
-        
-        self._orderbook_cache[symbol] = orderbook
-        return orderbook
+        try:
+            cache_key = f"orderbook:{symbol}"
+            payload = {
+                "type": "l2Book",
+                "coin": symbol
+            }
+            # Add dex parameter for XYZ perps
+            dex = self.config.get("hyperliquid", {}).get("dex")
+            if dex:
+                payload["dex"] = dex
+            
+            data = await self._cached_request(
+                cache_key,
+                self.config["hyperliquid"]["info_url"],
+                payload
+            )
+            
+            # Check if data is valid
+            if not data or "levels" not in data:
+                logger.warning(f"Invalid orderbook data for {symbol}: {data}")
+                return None
+            
+            orderbook = OrderBook(
+                bids=[(float(b["px"]), float(b["sz"])) for b in data.get("levels", [[]])[0]],
+                asks=[(float(a["px"]), float(a["sz"])) for a in data.get("levels", [[], []])[1]],
+                timestamp=time.time()
+            )
+            
+            self._orderbook_cache[symbol] = orderbook
+            return orderbook
+        except Exception as e:
+            logger.debug(f"Failed to get orderbook for {symbol}: {e}")
+            # Return cached orderbook if available
+            if symbol in self._orderbook_cache:
+                cached = self._orderbook_cache[symbol]
+                age = time.time() - cached.timestamp
+                if age < 60:  # Use cached data if less than 60s old
+                    logger.debug(f"Using cached orderbook ({age:.0f}s old)")
+                    return cached
+            return None
     
     async def get_klines(
         self,
@@ -740,6 +764,10 @@ class HyperliquidAPI:
                 "endTime": end_time or int(time.time() * 1000)
             }
         }
+        # Add dex parameter for XYZ perps
+        dex = self.config.get("hyperliquid", {}).get("dex")
+        if dex:
+            payload["dex"] = dex
         
         data = await self._post_request(
             self.config["hyperliquid"]["info_url"],
@@ -758,6 +786,10 @@ class HyperliquidAPI:
             "type": "recentTrades",
             "coin": symbol
         }
+        # Add dex parameter for XYZ perps
+        dex = self.config.get("hyperliquid", {}).get("dex")
+        if dex:
+            payload["dex"] = dex
         
         result = await self._post_request(
             self.config["hyperliquid"]["info_url"],
@@ -772,6 +804,10 @@ class HyperliquidAPI:
             "coin": symbol,
             "startTime": int((time.time() - 3600) * 1000)
         }
+        # Add dex parameter for XYZ perps
+        dex = self.config.get("hyperliquid", {}).get("dex")
+        if dex:
+            payload["dex"] = dex
         
         return await self._post_request(
             self.config["hyperliquid"]["info_url"],
@@ -787,6 +823,10 @@ class HyperliquidAPI:
             "type": "clearinghouseState",
             "user": self.wallet_address
         }
+        # Add dex parameter for XYZ perps clearinghouse
+        dex = self.config.get("hyperliquid", {}).get("dex")
+        if dex:
+            payload["dex"] = dex
         
         return await self._cached_request(
             cache_key,
@@ -826,6 +866,10 @@ class HyperliquidAPI:
             "type": "openOrders",
             "user": self.wallet_address
         }
+        # Add dex parameter for XYZ perps
+        dex = self.config.get("hyperliquid", {}).get("dex")
+        if dex:
+            payload["dex"] = dex
         
         result = await self._cached_request(
             cache_key,
@@ -845,6 +889,10 @@ class HyperliquidAPI:
             "type": "userFills",
             "user": self.wallet_address
         }
+        # Add dex parameter for XYZ perps
+        dex = self.config.get("hyperliquid", {}).get("dex")
+        if dex:
+            payload["dex"] = dex
         
         data = await self._cached_request(
             cache_key,
@@ -1007,6 +1055,9 @@ class HyperliquidAPI:
             "grouping": "na"
         }
         
+        # NOTE: Order actions do NOT include 'dex' field - the asset index (110000+) 
+        # already identifies the builder-deployed DEX. Only info queries need 'dex'.
+        
         nonce = int(time.time() * 1000)
         signed_payload = self._sign_action(action, nonce)
         
@@ -1153,6 +1204,8 @@ class HyperliquidAPI:
             "grouping": "na"
         }
         
+        # NOTE: Order actions do NOT include 'dex' field - asset index identifies DEX
+        
         nonce = int(time.time() * 1000)
         signed_payload = self._sign_action(action, nonce)
         
@@ -1257,6 +1310,8 @@ class HyperliquidAPI:
             "cancels": [{"a": asset_index, "o": order_id}]
         }
         
+        # NOTE: Cancel actions do NOT include 'dex' field - asset index identifies DEX
+        
         nonce = int(time.time() * 1000)
         signed_payload = self._sign_action(action, nonce)
         
@@ -1285,6 +1340,8 @@ class HyperliquidAPI:
             "type": "cancel",
             "cancels": cancels
         }
+        
+        # NOTE: Cancel actions do NOT include 'dex' field - asset index identifies DEX
         
         nonce = int(time.time() * 1000)
         signed_payload = self._sign_action(action, nonce)

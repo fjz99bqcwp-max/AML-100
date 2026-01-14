@@ -510,16 +510,17 @@ Examples:
         with open(params_path) as f:
             params = json.load(f)
         
-        # Enable HFT mode with tighter settings
+        # Enable HFT mode with RSI mean reversion settings
+        # Use time-based exit (60 bars) instead of TP/SL
         params["trading"]["hft_mode"] = True
-        params["trading"]["take_profit_pct"] = 0.5  # Scalp TP
-        params["trading"]["stop_loss_pct"] = 0.25   # Scalp SL
-        params["trading"]["max_hold_seconds"] = 60
-        params["trading"]["target_hold_seconds"] = 30
+        params["trading"]["take_profit_pct"] = 99.0  # Disabled - use time exit
+        params["trading"]["stop_loss_pct"] = 99.0   # Disabled - use time exit
+        params["trading"]["max_hold_seconds"] = 3600  # 60 minutes (60 bars)
+        params["trading"]["target_hold_seconds"] = 3600
         
         with open(params_path, "w") as f:
             json.dump(params, f, indent=2)
-        log_info("HFT mode enabled: TP=0.5%, SL=0.25%, max_hold=60s")
+        log_info("HFT mode enabled: RSI mean reversion with 60-bar time exit")
     
     # Print banner
     start_time = datetime.now(timezone.utc)

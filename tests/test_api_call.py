@@ -12,8 +12,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import logging
+import pytest
 logging.basicConfig(level=logging.INFO)
 
+@pytest.mark.slow
 async def test_raw_api():
     """Test direct API call"""
     url = 'https://api.hyperliquid.xyz/info'
@@ -43,6 +45,7 @@ async def test_raw_api():
             else:
                 print('Full response:', json.dumps(data, indent=2)[:1000])
 
+@pytest.mark.slow
 async def test_our_api():
     """Test our API wrapper"""
     from src.hyperliquid_api import HyperliquidAPI

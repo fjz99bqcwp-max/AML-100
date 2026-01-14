@@ -3,7 +3,9 @@
 import asyncio
 import aiohttp
 import time
+import pytest
 
+@pytest.mark.slow
 async def test_history():
     url = 'https://api.hyperliquid.xyz/info'
     

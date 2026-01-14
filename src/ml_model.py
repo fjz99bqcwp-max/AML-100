@@ -1934,6 +1934,49 @@ class MLModel:
             # Return safe default (HOLD with zero confidence)
             return 0, 0.0, np.zeros(3)
     
+    def predict_batch(
+        self,
+        features_batch: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Batch prediction for massive speedup during backtests.
+        Processes multiple samples at once on GPU.
+        
+        Args:
+            features_batch: Shape (batch_size, seq_len, n_features)
+        
+        Returns:
+            actions: Shape (batch_size,)
+            confidences: Shape (batch_size,)
+            q_values: Shape (batch_size, 3)
+        """
+        if self.model is None:
+            raise ValueError("Model not initialized")
+        
+        try:
+            self.model.eval()
+            
+            with torch.no_grad():
+                # Convert to tensor and move to device
+                state = torch.FloatTensor(features_batch).to(self.device)
+                q_values = self.model(state)
+                
+                # Get actions and confidences
+                actions = q_values.argmax(dim=1).cpu().numpy()
+                probs = F.softmax(q_values, dim=1)
+                confidences = probs.gather(1, torch.tensor(actions).unsqueeze(1).to(self.device)).squeeze().cpu().numpy()
+                q_vals_cpu = q_values.cpu().numpy()
+                
+                # Cleanup
+                del state, q_values, probs
+            
+            return actions, confidences, q_vals_cpu
+            
+        except Exception as e:
+            logger.error(f"Batch prediction error: {e}")
+            batch_size = len(features_batch)
+            return np.zeros(batch_size, dtype=int), np.zeros(batch_size), np.zeros((batch_size, 3))
+    
     async def quick_train(
         self,
         df: pd.DataFrame,
@@ -2201,7 +2244,8 @@ class BacktestEnvironment:
         transaction_cost: float = 0.0005,
         slippage: float = 0.0001,
         take_profit_pct: float = 0.5,
-        stop_loss_pct: float = 0.3
+        stop_loss_pct: float = 0.3,
+        max_hold_bars: int = 120  # Time-based exit (2 hours for trends to develop)
     ):
         self.df = df
         self.initial_capital = initial_capital
@@ -2209,12 +2253,14 @@ class BacktestEnvironment:
         self.slippage = slippage
         self.take_profit_pct = take_profit_pct
         self.stop_loss_pct = stop_loss_pct
+        self.max_hold_bars = max_hold_bars
         
         # State
         self.capital = initial_capital
         self.position = 0.0  # Current position size
         self.position_side = 0  # 1 = long, -1 = short, 0 = flat
         self.entry_price = 0.0
+        self.entry_idx = 0  # Track entry index for time-based exit
         self.current_idx = 0
         
         # History
@@ -2227,6 +2273,7 @@ class BacktestEnvironment:
         self.position = 0.0
         self.position_side = 0
         self.entry_price = 0.0
+        self.entry_idx = 0
         self.current_idx = 0
         self.trades = []
         self.equity_curve = []
@@ -2236,27 +2283,45 @@ class BacktestEnvironment:
         if self.position == 0:
             return 0.0
         
-        if self.position_side == 1:  # Long
-            proceeds = self.position * current_price * (1 - self.transaction_cost - self.slippage)
-            pnl = proceeds - (self.position * self.entry_price)
-        else:  # Short
-            # For short: profit when price goes down
-            cost_to_close = self.position * current_price * (1 + self.transaction_cost + self.slippage)
-            proceeds_from_short = self.position * self.entry_price
-            pnl = proceeds_from_short - cost_to_close
-            proceeds = self.capital  # Short doesn't add proceeds directly
+        # Calculate fees (round-trip)
+        fees_pct = self.transaction_cost + self.slippage
+        notional = self.position * self.entry_price
         
-        self.capital += proceeds if self.position_side == 1 else pnl
+        if self.position_side == 1:  # Long
+            # Long: buy at entry_price, sell at current_price
+            # Raw PnL = (exit - entry) / entry
+            raw_pnl_pct = (current_price - self.entry_price) / self.entry_price * 100
+        else:  # Short
+            # Short: sell at entry_price, buy back at current_price
+            # Raw PnL = (entry - exit) / entry
+            raw_pnl_pct = (self.entry_price - current_price) / self.entry_price * 100
+        
+        # Deduct round-trip fees (entry + exit)
+        net_pnl_pct = raw_pnl_pct - (fees_pct * 2 * 100)
+        
+        # Calculate dollar PnL
+        pnl = notional * (net_pnl_pct / 100)
+        
+        # DEBUG: Store capital before update
+        cap_before_close = self.capital
+        
+        # Update capital: add back notional + pnl
+        # (We subtracted notional at entry, now add it back with profit/loss)
+        self.capital += notional + pnl
+        
+        # DEBUG: Log ALL close operations
+        import logging
+        logging.getLogger(__name__).info(f"CLOSE: before={cap_before_close:.2f}, notional={notional:.2f}, pnl={pnl:.2f}, after={self.capital:.2f}, trade_num={len(self.trades)+1}")
         
         self.trades.append({
-            "entry_idx": self.current_idx - 1,
+            "entry_idx": self.entry_idx,
             "exit_idx": self.current_idx,
             "entry_price": self.entry_price,
             "exit_price": current_price,
             "size": self.position,
             "side": "long" if self.position_side == 1 else "short",
             "pnl": pnl,
-            "pnl_pct": pnl / (self.position * self.entry_price) * 100,
+            "pnl_pct": net_pnl_pct,
             "reason": reason
         })
         
@@ -2269,30 +2334,47 @@ class BacktestEnvironment:
     def step(
         self,
         action: int,
-        position_size_pct: float = 0.1
+        position_size_pct: float = 0.1,
+        data_idx: int = None
     ) -> Tuple[float, bool]:
         """
         Execute one step in the environment
-        Includes automatic TP/SL exits
+        Includes automatic TP/SL/time-based exits
+        
+        Args:
+            action: 0=hold, 1=buy, 2=sell
+            position_size_pct: Position size as fraction of capital
+            data_idx: Optional - use this dataframe index instead of internal counter
+        
         Returns: (reward, done)
         """
+        # Use external index if provided, otherwise use internal counter
+        if data_idx is not None:
+            self.current_idx = data_idx
+        
         if self.current_idx >= len(self.df) - 1:
             return 0.0, True
         
         current_price = self.df.iloc[self.current_idx]["close"]
-        next_price = self.df.iloc[self.current_idx + 1]["close"]
+        next_idx = min(self.current_idx + 1, len(self.df) - 1)
+        next_price = self.df.iloc[next_idx]["close"]
         
         reward = 0.0
         
-        # Check TP/SL first if we have a position
+        # Check exits if we have a position
         if self.position > 0 and self.entry_price > 0:
             if self.position_side == 1:  # Long position
                 pnl_pct = (current_price - self.entry_price) / self.entry_price * 100
             else:  # Short position
                 pnl_pct = (self.entry_price - current_price) / self.entry_price * 100
             
+            bars_held = self.current_idx - self.entry_idx
+            
+            # Time-based exit (for mean reversion strategy)
+            if bars_held >= self.max_hold_bars:
+                reward = self._close_position(current_price, "time_exit")
             # Take profit
-            if pnl_pct >= self.take_profit_pct:
+            elif pnl_pct >= self.take_profit_pct:
                 reward = self._close_position(current_price, "take_profit")
             # Stop loss
             elif pnl_pct <= -self.stop_loss_pct:
@@ -2301,24 +2383,30 @@ class BacktestEnvironment:
         # Process new signals only if flat
         if self.position == 0:
             if action == 1:  # BUY - Open long
-                size = (self.capital * position_size_pct) / current_price
-                cost = size * current_price * (1 + self.transaction_cost + self.slippage)
+                # Use notional value for position sizing, not raw cost
+                notional = self.capital * position_size_pct
+                size = notional / current_price
                 
-                if cost <= self.capital:
+                if notional <= self.capital:
                     self.position = size
                     self.position_side = 1
                     self.entry_price = current_price
-                    self.capital -= cost
+                    self.entry_idx = self.current_idx
+                    # Reserve notional (fees applied at exit)
+                    self.capital -= notional
                     
             elif action == 2:  # SELL - Open short
-                size = (self.capital * position_size_pct) / current_price
-                margin = size * current_price * (1 + self.transaction_cost + self.slippage)
+                # Same for short
+                notional = self.capital * position_size_pct
+                size = notional / current_price
                 
-                if margin <= self.capital:
+                if notional <= self.capital:
                     self.position = size
                     self.position_side = -1
                     self.entry_price = current_price
-                    # For short, we receive funds upfront (simplified)
+                    self.entry_idx = self.current_idx
+                    # Reserve notional as margin
+                    self.capital -= notional
         
         # Calculate equity for curve
         if self.position > 0:

@@ -185,13 +185,17 @@ class RiskManager:
         """Check and enforce risk limits"""
         metrics = await self.calculate_metrics()
         
-        # Auto-stop if drawdown exceeds limit
+        # Auto-stop if drawdown exceeds limit (with sanity check)
         auto_stop_dd = self.objectives.get("auto_stop_drawdown", 4.0)
-        if metrics.current_drawdown >= auto_stop_dd:
+        if metrics.current_drawdown >= auto_stop_dd and self.current_capital >= 1.0:
             self.is_halted = True
             self.halt_reason = f"Drawdown limit exceeded: {metrics.current_drawdown:.2f}%"
             self.risk_level = "critical"
             logger.critical(self.halt_reason)
+            return
+        elif metrics.current_drawdown >= 99.0 and self.current_capital < 1.0:
+            # Account essentially empty - warn but don't halt (no capital to protect)
+            logger.warning(f"Account capital critically low: ${self.current_capital:.2f}")
             return
         
         # Check daily loss limit
@@ -219,10 +223,15 @@ class RiskManager:
         if self._last_metrics and now - self._metrics_update_time < 3.0:
             return self._last_metrics
         
-        # Calculate drawdown
+        # Calculate drawdown - handle edge cases
         current_drawdown = 0.0
-        if self.peak_capital > 0:
-            current_drawdown = (self.peak_capital - self.current_capital) / self.peak_capital * 100
+        if self.peak_capital > 1.0:  # Require meaningful peak capital
+            # Cap at 100% drawdown
+            current_drawdown = min(100.0, max(0.0, (self.peak_capital - self.current_capital) / self.peak_capital * 100))
+        elif self.current_capital < 1.0:
+            # Account effectively empty
+            current_drawdown = 100.0
+            logger.warning(f"Capital critically low: ${self.current_capital:.2f}")
         
         # Calculate max drawdown
         max_drawdown = self._calculate_max_drawdown()

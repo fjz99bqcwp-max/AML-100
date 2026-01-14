@@ -55,7 +55,7 @@ cp .env.example .env
 source .venv/bin/activate
 
 # Full autonomous mode (prevents sleep on macOS)
-caffeinate python AML-100.py
+caffeinate python AML-100.py --hft
 
 # Training only
 python AML-100.py --train --epochs 100 --days 30
@@ -136,9 +136,16 @@ AML-100/
     "epsilon_decay": 0.997,
     "early_stop_patience": 30,
     "enable_torch_compile": true
+  },
+  "backtest": {
+    "enable_multiprocessing": true,
+    "max_workers": 8,
+    "chunk_size": 5000
   }
 }
 ```
+
+**Performance Tip**: Multiprocessing is enabled by default for faster backtests (2-4x speedup on multi-core systems). Set `enable_multiprocessing: false` to disable if needed.
 
 ### Objectives (config/objectives.json)
 

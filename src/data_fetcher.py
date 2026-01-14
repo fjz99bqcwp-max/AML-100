@@ -96,7 +96,7 @@ class DataFetcher:
         # XYZ100-USDC specific configuration
         self.XYZ100_MIN_HISTORY_RECORDS = 5000
         self.XYZ100_MIN_HISTORY_DAYS = 30
-        self.PRIMARY_SYMBOL = "XYZ100"
+        self.PRIMARY_SYMBOL = "xyz:XYZ100"  # XYZ perps coin name
         self.FALLBACK_SYMBOL = "US500"  # Changed from BTC to US500 for equity correlation
         self.SECONDARY_FALLBACK = "BTC"  # BTC as last resort
         self._using_fallback = False
@@ -221,13 +221,19 @@ class DataFetcher:
             if klines and len(klines) >= 1000:
                 logger.info(f"Fetched {len(klines)} SPX klines from HyperLiquid")
                 df = pd.DataFrame([{
-                    "timestamp": k.timestamp,
-                    "open": k.open,
-                    "high": k.high,
-                    "low": k.low,
-                    "close": k.close,
-                    "volume": k.volume
+                    "timestamp": k["t"] if isinstance(k, dict) else k.timestamp,
+                    "open": k["o"] if isinstance(k, dict) else k.open,
+                    "high": k["h"] if isinstance(k, dict) else k.high,
+                    "low": k["l"] if isinstance(k, dict) else k.low,
+                    "close": k["c"] if isinstance(k, dict) else k.close,
+                    "volume": k["v"] if isinstance(k, dict) else k.volume
                 } for k in klines])
+                
+                # Convert to numeric types (fix API returning strings)
+                for col in ["open", "high", "low", "close", "volume"]:
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
+                df = df.dropna()  # Remove any rows that failed conversion
+                
                 self._fallback_type = "SPX"
                 return df
             else:
@@ -605,16 +611,35 @@ class DataFetcher:
         symbol: str
     ) -> None:
         """Background loop for market snapshots (optimized interval)"""
+        consecutive_failures = 0
+        max_failures = 10
+        
         while self._running:
             try:
                 snapshot = await self.fetch_market_snapshot(symbol)
-                self._snapshot_cache.append(snapshot)
+                if snapshot is not None:
+                    self._snapshot_cache.append(snapshot)
+                    consecutive_failures = 0  # Reset on success
+                else:
+                    consecutive_failures += 1
+                    logger.warning(f"Snapshot returned None (attempt {consecutive_failures}/{max_failures})")
+                
+                # Stop trying if API is completely down
+                if consecutive_failures >= max_failures:
+                    logger.error(f"Snapshot fetch failed {max_failures} times, disabling snapshots")
+                    break
                 
                 # Update every 10 seconds to reduce API load (was 5s)
                 await asyncio.sleep(10)
                 
             except Exception as e:
-                logger.error(f"Snapshot fetch error: {e}")
+                consecutive_failures += 1
+                logger.error(f"Snapshot fetch error ({consecutive_failures}/{max_failures}): {e}")
+                
+                if consecutive_failures >= max_failures:
+                    logger.error(f"Too many snapshot failures, disabling snapshots")
+                    break
+                
                 await asyncio.sleep(30)  # Longer backoff on error (was 10s)
     
     def _parse_interval(self, interval: str) -> int:
@@ -631,28 +656,37 @@ class DataFetcher:
         
         return value * multipliers.get(unit, 60)
     
-    async def fetch_market_snapshot(self, symbol: str = "BTC") -> MarketSnapshot:
+    async def fetch_market_snapshot(self, symbol: str = "BTC") -> Optional[MarketSnapshot]:
         """Fetch current market snapshot"""
-        orderbook = await self.api.get_orderbook(symbol)
-        
-        # Calculate orderbook imbalance
-        bid_volume = sum(size for _, size in orderbook.bids[:5])
-        ask_volume = sum(size for _, size in orderbook.asks[:5])
-        imbalance = (bid_volume - ask_volume) / (bid_volume + ask_volume) if (bid_volume + ask_volume) > 0 else 0
-        
-        return MarketSnapshot(
-            timestamp=time.time(),
-            symbol=symbol,
-            mid_price=orderbook.mid_price,
-            bid_price=orderbook.bids[0][0] if orderbook.bids else 0,
-            ask_price=orderbook.asks[0][0] if orderbook.asks else 0,
-            bid_size=orderbook.bids[0][1] if orderbook.bids else 0,
-            ask_size=orderbook.asks[0][1] if orderbook.asks else 0,
-            spread_bps=orderbook.spread_bps,
-            orderbook_imbalance=imbalance,
-            volume_24h=0,  # Would need separate API call
-            funding_rate=0  # Would need separate API call
-        )
+        try:
+            orderbook = await self.api.get_orderbook(symbol)
+            
+            # Check for None response
+            if orderbook is None or not hasattr(orderbook, 'bids'):
+                logger.warning(f"Orderbook returned None or invalid data for {symbol}")
+                return None
+            
+            # Calculate orderbook imbalance
+            bid_volume = sum(size for _, size in orderbook.bids[:5]) if orderbook.bids else 0
+            ask_volume = sum(size for _, size in orderbook.asks[:5]) if orderbook.asks else 0
+            imbalance = (bid_volume - ask_volume) / (bid_volume + ask_volume) if (bid_volume + ask_volume) > 0 else 0
+            
+            return MarketSnapshot(
+                timestamp=time.time(),
+                symbol=symbol,
+                mid_price=orderbook.mid_price if orderbook.mid_price else 0,
+                bid_price=orderbook.bids[0][0] if orderbook.bids else 0,
+                ask_price=orderbook.asks[0][0] if orderbook.asks else 0,
+                bid_size=orderbook.bids[0][1] if orderbook.bids else 0,
+                ask_size=orderbook.asks[0][1] if orderbook.asks else 0,
+                spread_bps=orderbook.spread_bps,
+                orderbook_imbalance=imbalance,
+                volume_24h=0,  # Would need separate API call
+                funding_rate=0  # Would need separate API call
+            )
+        except Exception as e:
+            logger.warning(f"Error fetching market snapshot for {symbol}: {e}")
+            return None
     
     async def fetch_historical_klines(
         self,
@@ -690,7 +724,7 @@ class DataFetcher:
             week_ms = 7 * 86400 * 1000
             batch_num = 0
             consecutive_failures = 0
-            max_consecutive_failures = 3  # Stop after 3 consecutive failures
+            max_consecutive_failures = 1  # Fail fast for unavailable symbols
             
             while current_start < end_time:
                 try:
@@ -711,6 +745,8 @@ class DataFetcher:
                         if consecutive_failures >= max_consecutive_failures:
                             logger.error(f"Too many consecutive failures ({consecutive_failures}), aborting")
                             break
+                        # Skip to next batch to avoid infinite loop
+                        current_start = batch_end + 1
                         await asyncio.sleep(2)
                         continue
                     
@@ -732,6 +768,8 @@ class DataFetcher:
                     if consecutive_failures >= max_consecutive_failures:
                         logger.error(f"Too many consecutive failures ({consecutive_failures}), aborting fetch for {symbol}")
                         break
+                    # Skip to next batch to avoid infinite loop on persistent errors
+                    current_start = batch_end + 1 if 'batch_end' in dir() else current_start + week_ms
                     await asyncio.sleep(5)
         
         logger.info(f"Total klines collected: {len(all_klines)}")
@@ -934,8 +972,12 @@ class DataFetcher:
         df = await self.load_historical_data(symbol, interval, days)
         
         if df.empty:
-            # Fetch fresh data from API
-            df = await self.fetch_historical_klines(symbol, interval, days)
+            # Fetch fresh data from API with exception handling
+            try:
+                df = await self.fetch_historical_klines(symbol, interval, days)
+            except Exception as e:
+                logger.warning(f"Failed to fetch {symbol} data: {e}")
+                df = pd.DataFrame()  # Ensure fallback triggers
         
         # If primary symbol (XYZ100) data is insufficient, use fallback
         if (df.empty or len(df) < 500) and symbol == self.PRIMARY_SYMBOL:

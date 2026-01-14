@@ -76,7 +76,21 @@ class ParameterOptimizer:
         self.param_bounds = self.opt_config.get("param_bounds", {})
     
     def _save_params(self) -> None:
-        """Save updated parameters"""
+        """Save updated parameters with bound enforcement"""
+        # Enforce bounds before saving
+        bounds = self.param_bounds
+        if bounds:
+            trading = self.params.get("trading", {})
+            if "position_size_pct" in bounds:
+                lo, hi = bounds["position_size_pct"]
+                trading["position_size_pct"] = max(lo, min(hi, trading.get("position_size_pct", lo)))
+            if "take_profit_pct" in bounds:
+                lo, hi = bounds["take_profit_pct"]
+                trading["take_profit_pct"] = max(lo, min(hi, trading.get("take_profit_pct", lo)))
+            if "stop_loss_pct" in bounds:
+                lo, hi = bounds["stop_loss_pct"]
+                trading["stop_loss_pct"] = max(lo, min(hi, trading.get("stop_loss_pct", lo)))
+                
         with open(self.params_path, "w") as f:
             json.dump(self.params, f, indent=4)
         logger.info("Parameters saved to config/params.json")
@@ -278,8 +292,8 @@ class ParameterOptimizer:
         )
         self.params["trading"]["position_size_pct"] = np.clip(
             new_size,
-            max(min_size, bounds.get("position_size_pct", [0.05, 0.5])[0]),
-            bounds.get("position_size_pct", [0.05, 0.5])[1]
+            max(min_size, bounds.get("position_size_pct", [50.0, 50.0])[0]),
+            bounds.get("position_size_pct", [50.0, 50.0])[1]
         )
         
         # Save changes
@@ -346,7 +360,7 @@ class ParameterOptimizer:
                 ),
                 "position_size_pct": trial.suggest_float(
                     "position_size_pct",
-                    *self.param_bounds.get("position_size_pct", [0.05, 0.5])
+                    *self.param_bounds.get("position_size_pct", [50.0, 50.0])
                 ),
                 "learning_rate": trial.suggest_float(
                     "learning_rate",
