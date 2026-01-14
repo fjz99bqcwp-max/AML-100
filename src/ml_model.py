@@ -2398,6 +2398,13 @@ class BacktestEnvironment:
         fees_pct = self.transaction_cost + self.slippage
         notional = self.position * self.entry_price
         
+        # Guard against NaN/Inf values
+        if not np.isfinite(notional) or notional <= 0:
+            self.position = 0.0
+            self.position_side = 0
+            self.entry_price = 0.0
+            return 0.0
+        
         if self.position_side == 1:  # Long
             # Long: buy at entry_price, sell at current_price
             # Raw PnL = (exit - entry) / entry
@@ -2410,20 +2417,23 @@ class BacktestEnvironment:
         # Deduct round-trip fees (entry + exit)
         net_pnl_pct = raw_pnl_pct - (fees_pct * 2 * 100)
         
-        # Calculate dollar PnL
+        # Calculate dollar PnL with overflow protection
         pnl = notional * (net_pnl_pct / 100)
-        
-        # DEBUG: Store capital before update
-        cap_before_close = self.capital
+        if not np.isfinite(pnl):
+            pnl = -notional  # Assume total loss if overflow
         
         # Update capital: add back notional + pnl
         # (We subtracted notional at entry, now add it back with profit/loss)
         self.capital += notional + pnl
         
-        # DEBUG: Log ALL close operations with reason and bars held
-        import logging
+        # Sanity check: prevent capital going negative or NaN
+        if not np.isfinite(self.capital) or self.capital < 0:
+            self.capital = 0.0
+        
+        # Only log significant trades, not every close
         bars_held = self.current_idx - self.entry_idx
-        logging.getLogger(__name__).info(f"CLOSE [{reason}]: bars={bars_held}, pnl={pnl:.2f}, pnl_pct={net_pnl_pct:.3f}%, trade_num={len(self.trades)+1}")
+        # Debug logging disabled for performance - uncomment for debugging:
+        # logging.getLogger(__name__).debug(f"CLOSE [{reason}]: bars={bars_held}, pnl={pnl:.2f}, pnl_pct={net_pnl_pct:.3f}%")
         
         self.trades.append({
             "entry_idx": self.entry_idx,
@@ -2492,14 +2502,14 @@ class BacktestEnvironment:
             elif pnl_pct <= -self.stop_loss_pct:
                 reward = self._close_position(current_price, "stop_loss")
         
-        # Process new signals only if flat
-        if self.position == 0:
+        # Process new signals only if flat and capital is valid
+        if self.position == 0 and self.capital > 1.0 and np.isfinite(self.capital):
             if action == 1:  # BUY - Open long
                 # Use notional value for position sizing, not raw cost
                 notional = self.capital * position_size_pct
                 size = notional / current_price
                 
-                if notional <= self.capital:
+                if notional <= self.capital and notional > 0 and np.isfinite(size):
                     self.position = size
                     self.position_side = 1
                     self.entry_price = current_price
@@ -2512,7 +2522,7 @@ class BacktestEnvironment:
                 notional = self.capital * position_size_pct
                 size = notional / current_price
                 
-                if notional <= self.capital:
+                if notional <= self.capital and notional > 0 and np.isfinite(size):
                     self.position = size
                     self.position_side = -1
                     self.entry_price = current_price
@@ -2521,14 +2531,26 @@ class BacktestEnvironment:
                     self.capital -= notional
         
         # Calculate equity for curve
-        if self.position > 0:
+        # Note: capital has notional subtracted at entry, so we add back notional + unrealized PnL
+        if self.position > 0 and self.entry_price > 0:
+            notional_in_position = self.position * self.entry_price
             if self.position_side == 1:
                 unrealized = self.position * (next_price - self.entry_price)
             else:
                 unrealized = self.position * (self.entry_price - next_price)
-            total_equity = self.capital + self.position * self.entry_price + unrealized
+            
+            # Guard against overflow
+            if not np.isfinite(notional_in_position) or not np.isfinite(unrealized):
+                total_equity = max(0.0, self.capital)
+            else:
+                total_equity = self.capital + notional_in_position + unrealized
+                # Sanity check: prevent negative or unreasonable values
+                if not np.isfinite(total_equity):
+                    total_equity = 0.0
+                else:
+                    total_equity = max(0.0, min(total_equity, self.initial_capital * 100))
         else:
-            total_equity = self.capital
+            total_equity = max(0.0, self.capital) if np.isfinite(self.capital) else 0.0
         
         self.equity_curve.append(total_equity)
         self.current_idx += 1

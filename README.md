@@ -1,103 +1,160 @@
 # AML-100: Autonomous ML Trading System for XYZ100-USDC
 
-A fully autonomous machine learning-based trading system for **XYZ100-USDC equity perpetual futures** on Hyperliquid mainnet. Optimized for Apple Silicon M4 with Metal Performance Shaders (MPS) acceleration.
+A fully autonomous machine learning trading system for **XYZ100-USDC equity perpetual futures** on HyperLiquid mainnet. Optimized for Apple M4 (24GB RAM) with Metal Performance Shaders (MPS) acceleration.
 
-## Features
+**Timezone**: Zurich CET | **Last Cleaned**: 2026-01-14
 
-- **Hybrid LSTM+DQN Model**: Deep reinforcement learning with temporal pattern recognition
-- **torch.compile() Optimization**: Sub-millisecond inference on M4 chips
-- **Bayesian Optimization**: Auto-tunes trading parameters
-- **Kelly Criterion Risk Management**: Optimal position sizing
-- **Async WebSocket Data**: Real-time market data processing
-- **Automatic Fallback**: Uses synthetic/SPX data when XYZ100 history is insufficient
+## Model Architecture
+
+| Component | Specification |
+|-----------|--------------|
+| **LSTM Encoder** | 2 layers, hidden_size=128 |
+| **DQN Head** | output_size=3 (HOLD/BUY/SELL) |
+| **Features** | OHLCV, volume, returns, time-based only |
+| **Learning Rate** | 0.0001 |
+| **Epsilon Decay** | 0.997 |
+| **Leverage** | 1x (default) |
 
 ## Trading Objectives
 
 | Metric | Target |
 |--------|--------|
-| Monthly Return | 10-30% |
-| Profit Factor | ≥ 1.2 |
-| Sharpe Ratio | ≥ 1.5 |
-| Max Drawdown | ≤ 5% |
-| Auto-Halt | 4% drawdown |
-| Inference Latency | < 1ms |
+| Monthly Return | ≥15% |
+| Sharpe Ratio | ≥1.5 |
+| Max Drawdown | ≤5% |
+| Take Profit | 0.5% |
+| Stop Loss | 0.25% |
+| Position Size | 40% |
 
-## Quick Start
-
-### Prerequisites
-
-- Python 3.9+
-- macOS with Apple Silicon (M1/M2/M3/M4) recommended
-- Hyperliquid account with API credentials
-
-### Installation
-
-```bash
-# Clone and navigate to project
-cd /path/to/AML-100
-
-# Create virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Configure environment
-cp .env.example .env
-# Edit .env with your Hyperliquid credentials
-```
-
-### Usage
-
-```bash
-# Activate environment
-source .venv/bin/activate
-
-# Full autonomous mode (prevents sleep on macOS)
-caffeinate python AML-100.py --hft
-
-# Training only
-python AML-100.py --train --epochs 100 --days 30
-
-# Backtest with hybrid data (70% real + 30% synthetic)
-python AML-100.py --backtest --data hybrid --days 60
-
-# Backtest with synthetic data
-python AML-100.py --backtest --data synthetic --days 90
-
-# Optimization only
-python AML-100.py --optimize --trials 50
-
-# Live monitoring dashboard
-streamlit run monitoring/dashboard_streamlit.py
-```
-
-### Command Line Options
-
-| Option | Description |
-|--------|-------------|
-| `--train` | Run model training only |
-| `--backtest` | Run backtest only |
-| `--optimize` | Run parameter optimization only |
-| `--data` | Data source: `xyz100`, `hybrid`, `synthetic`, `btc` |
-| `--days` | Historical data days (default: 30) |
-| `--epochs` | Training epochs (default: 100) |
-| `--trials` | Optimization trials (default: 50) |
-| `--hft` | Enable HFT mode (tighter TP/SL) |
-| `--log-level` | Logging level: DEBUG, INFO, WARNING, ERROR |
-
-## Project Structure
+## Project Structure (Cleaned)
 
 ```
 AML-100/
-├── AML-100.py              # Main entry point
+├── scripts/
+│   ├── launch.py           # Main entry point (autonomous/backtest/train)
+│   ├── run_hft.sh          # Quick-start shell script
+│   └── setup_env.sh        # Environment setup
 ├── config/
-│   ├── api.json            # API configuration
-│   ├── objectives.json     # Trading objectives
-│   ├── params.json         # Trading parameters
-│   └── params_ultra_hft.json  # Ultra-HFT variant
+│   ├── api.json            # API credentials
+│   ├── params.json         # Trading/ML parameters (SPEC defaults)
+│   └── objectives.json     # Performance objectives
 ├── src/
+│   ├── main.py             # Core trading logic
+│   ├── ml_model.py         # LSTM+DQN hybrid model
+│   ├── data_fetcher.py     # Market data (SDK + synthetic)
+│   ├── hyperliquid_api.py  # HyperLiquid SDK integration
+│   ├── risk_manager.py     # Position/risk management
+│   └── optimizer.py        # Bayesian optimization
+├── monitoring/
+│   └── monitor_live.py     # Live trading dashboard
+├── tests/
+│   ├── test_ml_model.py    # Model tests
+│   ├── test_optimizer.py   # Optimizer tests
+│   └── test_risk_manager.py # Risk tests
+├── models/
+│   └── best_model.pt       # Trained model checkpoint
+├── data/
+│   ├── historical/         # Historical price data
+│   └── trading/            # Trade logs
+├── .env.example            # Environment template
+├── requirements.txt        # Python dependencies
+├── pytest.ini              # Test configuration
+└── README.md               # This file
+```
+
+## Quick Start
+
+```bash
+# 1. Setup environment
+./scripts/setup_env.sh
+source .venv/bin/activate
+
+# 2. Configure credentials
+cp .env.example .env
+# Edit .env with HYPERLIQUID_WALLET_ADDRESS and HYPERLIQUID_API_SECRET
+
+# 3. Run autonomous mode (prevents macOS sleep)
+caffeinate python scripts/launch.py --mode autonomous --asset XYZ100 \
+    --wallet 0x12045C1Cc410461B24e4293Dd05e2a6c47ebb584
+
+# Or use the shell script
+./scripts/run_hft.sh autonomous
+```
+
+## Execution Modes
+
+| Mode | Command | Description |
+|------|---------|-------------|
+| **Autonomous** | `--mode autonomous` | Full loop: backtest→optimize→train→live |
+| **Backtest** | `--mode backtest --days 180` | Historical simulation |
+| **Train** | `--mode train --epochs 180` | Model training only |
+| **Optimize** | `--mode optimize --trials 50` | Bayesian parameter tuning |
+| **Live** | `--mode live` | Live trading (requires objectives met) |
+
+## CLI Reference
+
+```bash
+python scripts/launch.py \
+    --mode autonomous \          # Required: autonomous|backtest|train|optimize|live
+    --asset XYZ100 \             # Trading asset (default: XYZ100)
+    --wallet 0x... \             # Wallet address for live trading
+    --days 180 \                 # Historical data days
+    --epochs 180 \               # Training epochs max
+    --trials 50 \                # Optimization trials
+    --cycle-hours 1 \            # Autonomous cycle interval
+    --reset-defaults \           # Reset to SPEC defaults
+    --log-level INFO             # DEBUG|INFO|WARNING|ERROR
+```
+
+## Backtesting Recommendations
+
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| Data Source | 90% real SPX + 10% synthetic | Robust training with augmentation |
+| Duration | 180 days | Sufficient for regime coverage |
+| Slippage | 0.05% | Realistic for limit orders |
+| Latency | 5-15ms | HyperLiquid execution range |
+| Commission | 0.05% | HyperLiquid maker fee |
+| Workers | 6 | M4 optimization |
+
+## Training Recommendations
+
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| Epochs | 180 max | Prevent overfitting |
+| Early Stop | patience=30 | Avoid wasted compute |
+| Learning Rate | 0.0001 | Stable convergence |
+| Batch Size | 32 | M4 memory optimal |
+| Epsilon Decay | 0.997 | Gradual exploration reduction |
+| num_workers | 6 | M4 MPS optimization |
+| Rewards | Vol-scaled | Adaptive to market regime |
+
+## Autonomous Mode Steps
+
+1. **Load configs** - Reset to SPEC defaults on first run
+2. **Backtest (Phase 1)** - 180-day hybrid data simulation
+3. **Check objectives** - Sharpe ≥1.5, DD ≤5%, return ≥15%
+4. **Optimize (Phase 2)** - Bayesian tuning if objectives not met
+5. **Train (Phase 3)** - Retrain model with optimized params
+6. **Validate (Phase 4)** - 30-day validation backtest
+7. **Live (Phase 5)** - Execute trades if objectives met
+8. **Loop** - Repeat hourly with parameter adjustments
+
+## SDK Integration
+
+Uses [HyperLiquid Python SDK](https://github.com/hyperliquid-dex/hyperliquid-python-sdk):
+
+```python
+from hyperliquid.info import Info
+from hyperliquid.utils import constants
+
+info = Info(constants.MAINNET_API_URL, skip_ws=True)
+user_state = info.user_state("0x12045C1Cc410461B24e4293Dd05e2a6c47ebb584")
+```
+
+## License
+
+MIT License - See LICENSE file for details.
 │   ├── main.py             # Core orchestration
 │   ├── ml_model.py         # Hybrid LSTM+DQN model
 │   ├── data_fetcher.py     # Data acquisition

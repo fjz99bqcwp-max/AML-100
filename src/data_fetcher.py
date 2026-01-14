@@ -221,7 +221,8 @@ class DataFetcher:
             if klines and len(klines) >= 1000:
                 logger.info(f"Fetched {len(klines)} SPX klines from HyperLiquid")
                 df = pd.DataFrame([{
-                    "timestamp": k["t"] if isinstance(k, dict) else k.timestamp,
+                    # API returns milliseconds, convert to seconds
+                    "timestamp": (k["t"] / 1000) if isinstance(k, dict) else (k.timestamp / 1000 if k.timestamp > 1e12 else k.timestamp),
                     "open": k["o"] if isinstance(k, dict) else k.open,
                     "high": k["h"] if isinstance(k, dict) else k.high,
                     "low": k["l"] if isinstance(k, dict) else k.low,
@@ -1266,7 +1267,11 @@ class DataFetcher:
         
         # Time-based (hour of day for equity market patterns)
         if "timestamp" in df.columns:
-            df["hour_of_day"] = pd.to_datetime(df["timestamp"], unit="s").dt.hour / 24.0
+            # Auto-detect milliseconds vs seconds (ms if > 1e12)
+            ts = df["timestamp"]
+            if ts.max() > 1e12:
+                ts = ts / 1000  # Convert milliseconds to seconds
+            df["hour_of_day"] = pd.to_datetime(ts, unit="s").dt.hour / 24.0
         else:
             df["hour_of_day"] = 0.0
         

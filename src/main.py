@@ -584,7 +584,7 @@ class AMLHFTSystem:
                         slippage=slippage_pct,
                         take_profit_pct=self.params["trading"]["take_profit_pct"],
                         stop_loss_pct=self.params["trading"]["stop_loss_pct"],
-                        max_hold_bars=15  # 15-min hold limit for faster profit taking
+                        max_hold_bars=60  # 60-bar (1 hour) hold limit
                     )
                     
                     # OPTIMIZED: Batch inference on entire chunk (10-50x faster)
@@ -614,33 +614,19 @@ class AMLHFTSystem:
                             q_values = q_values_batch[idx]
                             q_diff = np.max(q_values) - np.min(q_values)
                             
-                            # INVERTED HYBRID STRATEGY: Fade regime-adaptive signals
-                            final_action = 0  # Default to HOLD
+                            # Use ML model's action directly
+                            # The DQN model outputs: 0=HOLD, 1=BUY, 2=SELL
+                            final_action = action  # Trust the model's decision
                             
-                            # Get indicators
-                            row = df.iloc[i]
-                            rsi = row.get("rsi", 50) if not pd.isna(row.get("rsi")) else 50
-                            adx = row.get("adx", 50) if not pd.isna(row.get("adx")) else 50
-                            ema_10 = row.get("ema_10") if not pd.isna(row.get("ema_10")) else row.get("close")
-                            ema_20 = row.get("ema_20") if not pd.isna(row.get("ema_20")) else row.get("close")
-                            close = row.get("close")
+                            # Only apply min_q_diff filter for confidence
+                            if q_diff < min_q_diff:
+                                final_action = 0  # HOLD if confidence too low
                             
-                            if adx < 25:
-                                # RANGING: Fade mean reversion (do OPPOSITE)
-                                if rsi < 30:
-                                    final_action = 2  # SELL (fade the oversold buy signal)
-                                    sell_signals += 1
-                                elif rsi > 70:
-                                    final_action = 1  # BUY (fade the overbought sell signal)
-                                    buy_signals += 1
-                            else:
-                                # TRENDING: Fade trend following (do OPPOSITE)
-                                if ema_10 > ema_20 and close > ema_10 and rsi < 70:  # Uptrend
-                                    final_action = 2  # SELL (fade the buy signal)
-                                    sell_signals += 1
-                                elif ema_10 < ema_20 and close < ema_10 and rsi > 30:  # Downtrend
-                                    final_action = 1  # BUY (fade the sell signal)
-                                    buy_signals += 1
+                            # Track for logging
+                            if final_action == 1:
+                                buy_signals += 1
+                            elif final_action == 2:
+                                sell_signals += 1
                             
                             # Execute action with correct data index
                             reward, done = env.step(final_action, position_size_pct / 100, data_idx=i)
@@ -682,7 +668,7 @@ class AMLHFTSystem:
                     chunk_start_idx = chunk_end_idx
             
             logger.info(f"📊 Backtest complete: {len(all_trades)} trades executed")
-            logger.info(f"📊 RSI signals: {buy_signals} buys (RSI<20), {sell_signals} sells (RSI>80)")
+            logger.info(f"📊 Strategy signals: {buy_signals} buys (momentum/SMA), {sell_signals} sells (momentum/SMA)")
             
             # Calculate metrics from aggregated results
             avg_latency_ms = latency_sum / max(total_rows - seq_len - 1, 1) if not use_multiprocessing else 0.0
@@ -750,13 +736,15 @@ class AMLHFTSystem:
                 logger.error(f"   Trade density: {trade_density:.4f}% (target: >0.1%)")
                 logger.error(f"   System is HOLDing {100-trade_density:.2f}% of the time - CRITICAL")
                 logger.error(f"   Recommendations:")
-                logger.error(f"     1. Increase trade_bonus in params.json (current: {self.params['ml_model']['reward']['trade_bonus']})")
-                logger.error(f"     2. Lower signal_threshold (current: {self.params['trading']['signal_threshold']})")
-                logger.error(f"     3. Decrease epsilon_decay for faster exploitation (current: {self.params['ml_model']['epsilon_decay']})")
+                logger.error(f"     1. Relax signal thresholds (momentum/SMA spread)")
+                logger.error(f"     2. Lower signal_threshold (current: {self.params['trading'].get('signal_threshold', 0.6)})")
+                logger.error(f"     3. Check data quality and feature generation")
                 metrics["objectives_met"] = False
                 metrics["failure_reason"] = "insufficient_trades"
             
-            # Log objectives check
+            # Add sample trades for debugging (first 20)
+            if all_trades:
+                metrics["sample_trades"] = all_trades[:20]
             
             # Check objectives
             objectives_met = self._check_objectives(metrics)
