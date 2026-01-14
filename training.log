@@ -48,3 +48,312 @@
 [2m2026-01-14 20:13:10[0m [92mINFO[0m     src.ml_model         Model saved to models/best_model.pt
 [2m2026-01-14 20:13:10[0m [92mINFO[0m     src.ml_model         New best reward: 1.5745 - Model saved
 [2m2026-01-14 20:13:10[0m [92mINFO[0m     src.ml_model         Epoch 2/50 - Reward: 1.5745, Best: 1.5745, Epsilon: 0.9990, LR: 0.001788, Time: 0.25s, ETA: 0.5min
+[2m2026-01-14 20:13:12[0m [92mINFO[0m     src.ml_model         Model saved to models/best_model.pt
+[2m2026-01-14 20:13:12[0m [92mINFO[0m     src.ml_model         New best reward: 1.5810 - Model saved
+[2m2026-01-14 20:13:12[0m [92mINFO[0m     src.ml_model         Epoch 8/50 - Reward: 1.5810, Best: 1.5810, Epsilon: 0.9960, LR: 0.001788, Time: 0.24s, ETA: 0.2min
+[2m2026-01-14 20:13:12[0m [92mINFO[0m     src.ml_model         Epoch 10/50 - Reward: 1.5446, Best: 1.5810, Epsilon: 0.9950, LR: 0.001788, Time: 0.24s, ETA: 0.2min
+[2m2026-01-14 20:13:14[0m [92mINFO[0m     src.ml_model         Learning rate reduced: 0.001788 -> 0.000894
+[2m2026-01-14 20:13:15[0m [92mINFO[0m     src.ml_model         Epoch 20/50 - Reward: 1.4232, Best: 1.5810, Epsilon: 0.9900, LR: 0.000894, Time: 0.27s, ETA: 0.1min
+[2m2026-01-14 20:13:17[0m [92mINFO[0m     src.ml_model         Learning rate reduced: 0.000894 -> 0.000447
+[2m2026-01-14 20:13:17[0m [92mINFO[0m     src.ml_model         Epoch 30/50 - Reward: 1.5486, Best: 1.5810, Epsilon: 0.9851, LR: 0.000447, Time: 0.23s, ETA: 0.1min
+[2m2026-01-14 20:13:19[0m [92mINFO[0m     src.ml_model         Early stopping at epoch 38 (no improvement for 30 epochs)
+[2m2026-01-14 20:13:19[0m [92mINFO[0m     src.ml_model         Model saved to models/final_model.pt
+[2m2026-01-14 20:13:19[0m [92mINFO[0m     src.ml_model         Training complete in 10.23s (38 epochs, 0.27s/epoch avg)
+[2m2026-01-14 20:13:19[0m [92mINFO[0m     src.ml_model         Saved 12 epochs via early stopping
+[2m2026-01-14 20:13:19[0m [92mINFO[0m     src.ml_model         Reward histogram saved to logs/reward_hist.png
+[2m2026-01-14 20:13:19[0m [92mINFO[0m     src.main             Training complete: 38/50 epochs, best_reward=1.5810, time=10.2s, early_stopped
+[2m2026-01-14 20:13:19[0m [92mINFO[0m     src.main             ✅ Phase 0 complete: Model trained with reward 1.5810
+[2m2026-01-14 20:13:19[0m [92mINFO[0m     src.main             Phase 1: Initial Backtest (180 days)
+[2m2026-01-14 20:13:19[0m [92mINFO[0m     src.main             📊 Starting backtest (180 days, slippage=0.015%, latency=1-3ms)...
+[2m2026-01-14 20:13:19[0m [92mINFO[0m     src.data_fetcher     Using in-memory cached training data: xyz:XYZ100_1m_180d
+[2m2026-01-14 20:13:19[0m [92mINFO[0m     src.main             🚀 Using multiprocessing with 8 workers
+✅ Loaded environment from /Users/nheosdisplay/VSC/AML/AML-100/.env
+✅ Loaded environment from /Users/nheosdisplay/VSC/AML/AML-100/.env
+✅ Loaded environment from /Users/nheosdisplay/VSC/AML/AML-100/.env
+✅ Loaded environment from /Users/nheosdisplay/VSC/AML/AML-100/.env
+✅ Loaded environment from /Users/nheosdisplay/VSC/AML/AML-100/.env
+✅ Loaded environment from /Users/nheosdisplay/VSC/AML/AML-100/.env
+✅ Loaded environment from /Users/nheosdisplay/VSC/AML/AML-100/.env
+✅ Loaded environment from /Users/nheosdisplay/VSC/AML/AML-100/.env
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.main             Backtest progress: 100% (Chunk 1/1)
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.main             📊 Backtest complete: 39 trades executed
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.main             📊 RSI signals: 92 buys (RSI<20), 42 sells (RSI>80)
+[2m2026-01-14 20:13:23[0m [91mERROR[0m    src.main             ❌ TRADE DENSITY FAILURE: 39 trades < 180 threshold
+[2m2026-01-14 20:13:23[0m [91mERROR[0m    src.main                Trade density: 0.7836% (target: >0.1%)
+[2m2026-01-14 20:13:23[0m [91mERROR[0m    src.main                System is HOLDing 99.22% of the time - CRITICAL
+[2m2026-01-14 20:13:23[0m [91mERROR[0m    src.main                Recommendations:
+[2m2026-01-14 20:13:23[0m [91mERROR[0m    src.main                  1. Increase trade_bonus in params.json (current: 5.0)
+[2m2026-01-14 20:13:23[0m [91mERROR[0m    src.main                  2. Lower signal_threshold (current: 1e-05)
+[2m2026-01-14 20:13:23[0m [91mERROR[0m    src.main                  3. Decrease epsilon_decay for faster exploitation (current: 0.9995)
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.main             ==================================================
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.main             OBJECTIVES CHECK:
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.main               Monthly Return: -0.27% >= 2.0%: ✗
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.main               Profit Factor: 0.11 >= 1.1: ✗
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.main               Sharpe Ratio:  -15.46 >= 0.8: ✗
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.main               Max Drawdown:  1.64% <= 5%: ✓
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.main               ALL OBJECTIVES MET: ✗ NO
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.main             ==================================================
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.data_fetcher     Saved backtest results to data/backtests/backtest_20260114_191323.json
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.main             Backtest complete - Return: -1.61%, Sharpe: -15.46, MaxDD: 1.64%, Objectives met: False
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.main             ✅ Phase 1 complete: 39 trades, -1.61% return
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.main             Phase 1 objectives met: False
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.main             ============================================================
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.main             Phase 2: Parameter Optimization (Attempt 1/5)
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.main             ============================================================
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.main             Starting parameter optimization...
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.data_fetcher     Loaded cached training data from data/cache/training_49af99fbdc94.joblib
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.optimizer        Starting Bayesian optimization with 100 trials
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.71, pnl_pct=-0.120%, trade_num=1
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.69, pnl_pct=-0.116%, trade_num=2
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.76, pnl_pct=-0.128%, trade_num=3
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.55, pnl_pct=-0.093%, trade_num=4
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.69, pnl_pct=-0.116%, trade_num=5
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.59, pnl_pct=-0.101%, trade_num=6
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.75, pnl_pct=-0.128%, trade_num=7
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.75, pnl_pct=-0.128%, trade_num=8
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.55, pnl_pct=-0.093%, trade_num=9
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=0.53, pnl_pct=0.090%, trade_num=10
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-3.10, pnl_pct=-0.525%, trade_num=11
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.45, pnl_pct=-0.077%, trade_num=12
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-1.00, pnl_pct=-0.171%, trade_num=13
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-1.09, pnl_pct=-0.187%, trade_num=14
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-1.03, pnl_pct=-0.175%, trade_num=15
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-1.37, pnl_pct=-0.234%, trade_num=16
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.24, pnl_pct=-0.042%, trade_num=17
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=3.60, pnl_pct=0.616%, trade_num=18
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-1.00, pnl_pct=-0.171%, trade_num=19
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-1.09, pnl_pct=-0.186%, trade_num=20
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=0.34, pnl_pct=0.058%, trade_num=21
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-1.97, pnl_pct=-0.337%, trade_num=22
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.50, pnl_pct=-0.085%, trade_num=23
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.93, pnl_pct=-0.159%, trade_num=24
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.50, pnl_pct=-0.085%, trade_num=25
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.18, pnl_pct=-0.030%, trade_num=26
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.84, pnl_pct=-0.143%, trade_num=27
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.90, pnl_pct=-0.155%, trade_num=28
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.88, pnl_pct=-0.151%, trade_num=29
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-1.35, pnl_pct=-0.232%, trade_num=30
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-3.70, pnl_pct=-0.637%, trade_num=31
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-1.98, pnl_pct=-0.341%, trade_num=32
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.96, pnl_pct=-0.167%, trade_num=33
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=0.84, pnl_pct=0.145%, trade_num=34
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.65, pnl_pct=-0.112%, trade_num=35
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.27, pnl_pct=-0.046%, trade_num=36
+[2m2026-01-14 20:13:23[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.39, pnl_pct=-0.120%, trade_num=1
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.38, pnl_pct=-0.116%, trade_num=2
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.41, pnl_pct=-0.128%, trade_num=3
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.30, pnl_pct=-0.093%, trade_num=4
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.37, pnl_pct=-0.116%, trade_num=5
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.32, pnl_pct=-0.101%, trade_num=6
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.41, pnl_pct=-0.128%, trade_num=7
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.41, pnl_pct=-0.128%, trade_num=8
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.30, pnl_pct=-0.093%, trade_num=9
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=0.29, pnl_pct=0.090%, trade_num=10
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [stop_loss]: bars=29, pnl=-1.30, pnl_pct=-0.404%, trade_num=11
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.25, pnl_pct=-0.077%, trade_num=12
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.55, pnl_pct=-0.171%, trade_num=13
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.60, pnl_pct=-0.187%, trade_num=14
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.56, pnl_pct=-0.175%, trade_num=15
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.75, pnl_pct=-0.234%, trade_num=16
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.13, pnl_pct=-0.042%, trade_num=17
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [take_profit]: bars=10, pnl=1.30, pnl_pct=0.405%, trade_num=18
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.06, pnl_pct=-0.019%, trade_num=19
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-1.02, pnl_pct=-0.318%, trade_num=20
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.60, pnl_pct=-0.186%, trade_num=21
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=0.19, pnl_pct=0.058%, trade_num=22
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-1.08, pnl_pct=-0.337%, trade_num=23
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.27, pnl_pct=-0.085%, trade_num=24
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.51, pnl_pct=-0.159%, trade_num=25
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.27, pnl_pct=-0.085%, trade_num=26
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.10, pnl_pct=-0.030%, trade_num=27
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.46, pnl_pct=-0.143%, trade_num=28
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.50, pnl_pct=-0.155%, trade_num=29
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.48, pnl_pct=-0.151%, trade_num=30
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.74, pnl_pct=-0.232%, trade_num=31
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [stop_loss]: bars=40, pnl=-1.19, pnl_pct=-0.373%, trade_num=32
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [stop_loss]: bars=17, pnl=-1.22, pnl_pct=-0.384%, trade_num=33
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [stop_loss]: bars=19, pnl=-1.21, pnl_pct=-0.380%, trade_num=34
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.53, pnl_pct=-0.167%, trade_num=35
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=0.46, pnl_pct=0.145%, trade_num=36
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.36, pnl_pct=-0.112%, trade_num=37
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.15, pnl_pct=-0.046%, trade_num=38
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.37, pnl_pct=-0.120%, trade_num=1
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.36, pnl_pct=-0.116%, trade_num=2
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.39, pnl_pct=-0.128%, trade_num=3
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.29, pnl_pct=-0.093%, trade_num=4
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.36, pnl_pct=-0.116%, trade_num=5
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.31, pnl_pct=-0.101%, trade_num=6
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.39, pnl_pct=-0.128%, trade_num=7
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.39, pnl_pct=-0.128%, trade_num=8
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.29, pnl_pct=-0.093%, trade_num=9
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=0.28, pnl_pct=0.090%, trade_num=10
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-1.61, pnl_pct=-0.525%, trade_num=11
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.24, pnl_pct=-0.077%, trade_num=12
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.52, pnl_pct=-0.171%, trade_num=13
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.57, pnl_pct=-0.187%, trade_num=14
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.54, pnl_pct=-0.175%, trade_num=15
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.72, pnl_pct=-0.234%, trade_num=16
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.13, pnl_pct=-0.042%, trade_num=17
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=1.89, pnl_pct=0.616%, trade_num=18
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.52, pnl_pct=-0.171%, trade_num=19
+[2m2026-01-14 20:13:24[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.57, pnl_pct=-0.186%, trade_num=20
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=0.18, pnl_pct=0.058%, trade_num=21
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-1.03, pnl_pct=-0.337%, trade_num=22
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.26, pnl_pct=-0.085%, trade_num=23
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.49, pnl_pct=-0.159%, trade_num=24
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.26, pnl_pct=-0.085%, trade_num=25
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.09, pnl_pct=-0.030%, trade_num=26
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.44, pnl_pct=-0.143%, trade_num=27
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.47, pnl_pct=-0.155%, trade_num=28
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.46, pnl_pct=-0.151%, trade_num=29
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.71, pnl_pct=-0.232%, trade_num=30
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-1.94, pnl_pct=-0.637%, trade_num=31
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-1.04, pnl_pct=-0.341%, trade_num=32
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.51, pnl_pct=-0.167%, trade_num=33
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=0.44, pnl_pct=0.145%, trade_num=34
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.34, pnl_pct=-0.112%, trade_num=35
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.14, pnl_pct=-0.046%, trade_num=36
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.45, pnl_pct=-0.120%, trade_num=1
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.43, pnl_pct=-0.116%, trade_num=2
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.48, pnl_pct=-0.128%, trade_num=3
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.35, pnl_pct=-0.093%, trade_num=4
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.43, pnl_pct=-0.116%, trade_num=5
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.37, pnl_pct=-0.101%, trade_num=6
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.48, pnl_pct=-0.128%, trade_num=7
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.47, pnl_pct=-0.128%, trade_num=8
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.34, pnl_pct=-0.093%, trade_num=9
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=0.33, pnl_pct=0.090%, trade_num=10
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [stop_loss]: bars=44, pnl=-1.52, pnl_pct=-0.408%, trade_num=11
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.29, pnl_pct=-0.077%, trade_num=12
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.63, pnl_pct=-0.171%, trade_num=13
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.69, pnl_pct=-0.187%, trade_num=14
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.65, pnl_pct=-0.175%, trade_num=15
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.86, pnl_pct=-0.234%, trade_num=16
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.15, pnl_pct=-0.042%, trade_num=17
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=2.28, pnl_pct=0.616%, trade_num=18
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.63, pnl_pct=-0.171%, trade_num=19
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.69, pnl_pct=-0.186%, trade_num=20
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=0.22, pnl_pct=0.058%, trade_num=21
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-1.25, pnl_pct=-0.337%, trade_num=22
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.31, pnl_pct=-0.085%, trade_num=23
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.59, pnl_pct=-0.159%, trade_num=24
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.31, pnl_pct=-0.085%, trade_num=25
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.11, pnl_pct=-0.030%, trade_num=26
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.53, pnl_pct=-0.143%, trade_num=27
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.57, pnl_pct=-0.155%, trade_num=28
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.56, pnl_pct=-0.151%, trade_num=29
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.86, pnl_pct=-0.232%, trade_num=30
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [stop_loss]: bars=47, pnl=-1.72, pnl_pct=-0.466%, trade_num=31
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-1.25, pnl_pct=-0.341%, trade_num=32
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.61, pnl_pct=-0.167%, trade_num=33
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=0.53, pnl_pct=0.145%, trade_num=34
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.41, pnl_pct=-0.112%, trade_num=35
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.17, pnl_pct=-0.046%, trade_num=36
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.57, pnl_pct=-0.120%, trade_num=1
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.55, pnl_pct=-0.116%, trade_num=2
+[2m2026-01-14 20:13:25[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.60, pnl_pct=-0.128%, trade_num=3
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.44, pnl_pct=-0.093%, trade_num=4
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.55, pnl_pct=-0.116%, trade_num=5
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.47, pnl_pct=-0.101%, trade_num=6
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.60, pnl_pct=-0.128%, trade_num=7
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.60, pnl_pct=-0.128%, trade_num=8
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.44, pnl_pct=-0.093%, trade_num=9
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=0.42, pnl_pct=0.090%, trade_num=10
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-2.47, pnl_pct=-0.525%, trade_num=11
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.36, pnl_pct=-0.077%, trade_num=12
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.80, pnl_pct=-0.171%, trade_num=13
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.88, pnl_pct=-0.187%, trade_num=14
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.82, pnl_pct=-0.175%, trade_num=15
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-1.09, pnl_pct=-0.234%, trade_num=16
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.20, pnl_pct=-0.042%, trade_num=17
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [take_profit]: bars=26, pnl=2.61, pnl_pct=0.557%, trade_num=18
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.80, pnl_pct=-0.171%, trade_num=19
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.87, pnl_pct=-0.186%, trade_num=20
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=0.27, pnl_pct=0.058%, trade_num=21
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-1.58, pnl_pct=-0.337%, trade_num=22
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.40, pnl_pct=-0.085%, trade_num=23
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.74, pnl_pct=-0.159%, trade_num=24
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.40, pnl_pct=-0.085%, trade_num=25
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.14, pnl_pct=-0.030%, trade_num=26
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.67, pnl_pct=-0.143%, trade_num=27
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.72, pnl_pct=-0.155%, trade_num=28
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.70, pnl_pct=-0.151%, trade_num=29
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-1.08, pnl_pct=-0.232%, trade_num=30
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [stop_loss]: bars=59, pnl=-2.87, pnl_pct=-0.618%, trade_num=31
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-1.58, pnl_pct=-0.341%, trade_num=32
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.77, pnl_pct=-0.167%, trade_num=33
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=0.67, pnl_pct=0.145%, trade_num=34
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.52, pnl_pct=-0.112%, trade_num=35
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.21, pnl_pct=-0.046%, trade_num=36
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.50, pnl_pct=-0.120%, trade_num=1
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.48, pnl_pct=-0.116%, trade_num=2
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.53, pnl_pct=-0.128%, trade_num=3
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.39, pnl_pct=-0.093%, trade_num=4
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.48, pnl_pct=-0.116%, trade_num=5
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.42, pnl_pct=-0.101%, trade_num=6
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.53, pnl_pct=-0.128%, trade_num=7
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.53, pnl_pct=-0.128%, trade_num=8
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.39, pnl_pct=-0.093%, trade_num=9
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=0.37, pnl_pct=0.090%, trade_num=10
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [stop_loss]: bars=6, pnl=-1.53, pnl_pct=-0.369%, trade_num=11
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.32, pnl_pct=-0.077%, trade_num=12
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.71, pnl_pct=-0.171%, trade_num=13
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.77, pnl_pct=-0.187%, trade_num=14
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.72, pnl_pct=-0.175%, trade_num=15
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.97, pnl_pct=-0.234%, trade_num=16
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.17, pnl_pct=-0.042%, trade_num=17
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=2.54, pnl_pct=0.616%, trade_num=18
+[2m2026-01-14 20:13:26[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.71, pnl_pct=-0.171%, trade_num=19
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.77, pnl_pct=-0.186%, trade_num=20
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=0.24, pnl_pct=0.058%, trade_num=21
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-1.39, pnl_pct=-0.337%, trade_num=22
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.35, pnl_pct=-0.085%, trade_num=23
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.66, pnl_pct=-0.159%, trade_num=24
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.35, pnl_pct=-0.085%, trade_num=25
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.13, pnl_pct=-0.030%, trade_num=26
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.59, pnl_pct=-0.143%, trade_num=27
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.64, pnl_pct=-0.155%, trade_num=28
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.62, pnl_pct=-0.151%, trade_num=29
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.96, pnl_pct=-0.232%, trade_num=30
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [stop_loss]: bars=40, pnl=-1.53, pnl_pct=-0.373%, trade_num=31
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [stop_loss]: bars=16, pnl=-1.50, pnl_pct=-0.365%, trade_num=32
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [stop_loss]: bars=14, pnl=-1.48, pnl_pct=-0.361%, trade_num=33
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.68, pnl_pct=-0.167%, trade_num=34
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=0.59, pnl_pct=0.145%, trade_num=35
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.46, pnl_pct=-0.112%, trade_num=36
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.19, pnl_pct=-0.046%, trade_num=37
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.46, pnl_pct=-0.120%, trade_num=1
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.44, pnl_pct=-0.116%, trade_num=2
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.48, pnl_pct=-0.128%, trade_num=3
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.35, pnl_pct=-0.093%, trade_num=4
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.44, pnl_pct=-0.116%, trade_num=5
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.38, pnl_pct=-0.101%, trade_num=6
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.48, pnl_pct=-0.128%, trade_num=7
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.48, pnl_pct=-0.128%, trade_num=8
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.35, pnl_pct=-0.093%, trade_num=9
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=0.34, pnl_pct=0.090%, trade_num=10
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-1.99, pnl_pct=-0.525%, trade_num=11
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.29, pnl_pct=-0.077%, trade_num=12
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.65, pnl_pct=-0.171%, trade_num=13
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.70, pnl_pct=-0.187%, trade_num=14
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.66, pnl_pct=-0.175%, trade_num=15
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.88, pnl_pct=-0.234%, trade_num=16
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.16, pnl_pct=-0.042%, trade_num=17
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=2.32, pnl_pct=0.616%, trade_num=18
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.64, pnl_pct=-0.171%, trade_num=19
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.70, pnl_pct=-0.186%, trade_num=20
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=0.22, pnl_pct=0.058%, trade_num=21
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-1.27, pnl_pct=-0.337%, trade_num=22
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.32, pnl_pct=-0.085%, trade_num=23
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.60, pnl_pct=-0.159%, trade_num=24
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.32, pnl_pct=-0.085%, trade_num=25
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.11, pnl_pct=-0.030%, trade_num=26
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.54, pnl_pct=-0.143%, trade_num=27
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.58, pnl_pct=-0.155%, trade_num=28
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.57, pnl_pct=-0.151%, trade_num=29
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.87, pnl_pct=-0.232%, trade_num=30
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-2.39, pnl_pct=-0.637%, trade_num=31
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-1.28, pnl_pct=-0.341%, trade_num=32
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.62, pnl_pct=-0.167%, trade_num=33
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=0.54, pnl_pct=0.145%, trade_num=34
+[2m2026-01-14 20:13:27[0m [92mINFO[0m     src.ml_model         CLOSE [time_exit]: bars=60, pnl=-0.42, pnl_pct=-0.112%, trade_num=35
