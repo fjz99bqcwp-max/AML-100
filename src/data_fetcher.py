@@ -1224,119 +1224,51 @@ class DataFetcher:
     
     def _add_technical_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Add technical indicators for ML training.
-        
-        Step 3: Enhanced feature engineering with:
-        - Standard TA indicators (RSI, MACD, BB, ATR)
-        - Momentum and volatility features
-        - Trend strength (ADX)
-        - Price patterns (higher highs, lower lows)
-        - Volume-price divergence
+        Add technical features for ML training.
+        SIMPLIFIED SPEC: Only equity-specific basics - OHLCV, returns, volume, time.
+        NO RSI, MACD, ATR, ADX, Bollinger Bands, or other complex indicators.
         """
-        # Returns
+        # Basic returns (from price only)
         df["returns"] = df["close"].pct_change()
         df["log_returns"] = np.log(df["close"] / df["close"].shift(1))
         
-        # Moving averages
-        for period in [7, 14, 20, 21, 50, 100, 200]:
+        # Simple moving averages (for spread calculation only)
+        for period in [7, 21, 50]:
             df[f"sma_{period}"] = df["close"].rolling(period).mean()
-            df[f"ema_{period}"] = df["close"].ewm(span=period).mean()
         
-        # RSI
-        delta = df["close"].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-        rs = gain / loss
-        df["rsi"] = 100 - (100 / (1 + rs))
+        # SMA spreads (simple relative price position)
+        df["sma_spread_7_21"] = (df["sma_7"] - df["sma_21"]) / df["close"]
+        df["sma_spread_7_50"] = (df["sma_7"] - df["sma_50"]) / df["close"]
         
-        # MACD
-        exp1 = df["close"].ewm(span=12).mean()
-        exp2 = df["close"].ewm(span=26).mean()
-        df["macd"] = exp1 - exp2
-        df["macd_signal"] = df["macd"].ewm(span=9).mean()
-        df["macd_hist"] = df["macd"] - df["macd_signal"]
-        
-        # Bollinger Bands
-        df["bb_middle"] = df["close"].rolling(20).mean()
-        std = df["close"].rolling(20).std()
-        df["bb_upper"] = df["bb_middle"] + (std * 2)
-        df["bb_lower"] = df["bb_middle"] - (std * 2)
-        df["bb_width"] = (df["bb_upper"] - df["bb_lower"]) / df["bb_middle"]
-        df["bb_position"] = (df["close"] - df["bb_lower"]) / (df["bb_upper"] - df["bb_lower"])
-        
-        # ATR
-        high_low = df["high"] - df["low"]
-        high_close = (df["high"] - df["close"].shift()).abs()
-        low_close = (df["low"] - df["close"].shift()).abs()
-        tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-        df["atr"] = tr.rolling(14).mean()
-        df["atr_pct"] = df["atr"] / df["close"]
-        
-        # Volume features
+        # Volume features (simple ratio)
         df["volume_sma"] = df["volume"].rolling(20).mean()
-        df["volume_ratio"] = df["volume"] / df["volume_sma"]
+        df["volume_ratio"] = df["volume"] / df["volume_sma"].clip(lower=1)
         
-        # Price momentum
+        # Simple momentum (price-based only)
         df["momentum_5"] = df["close"] / df["close"].shift(5) - 1
         df["momentum_10"] = df["close"] / df["close"].shift(10) - 1
-        df["momentum_20"] = df["close"] / df["close"].shift(20) - 1
         
-        # Volatility
-        df["volatility"] = df["returns"].rolling(20).std() * np.sqrt(365 * 24 * 60)  # Annualized
+        # Volatility from returns (no ATR)
+        df["volatility"] = df["returns"].rolling(20).std() * np.sqrt(365 * 24 * 60)
         
-        # Trend strength
-        df["adx"] = self._calculate_adx(df)
+        # Equity-specific basics
+        df["equity_vol_5"] = df["returns"].rolling(5).std() * np.sqrt(252 * 24 * 60)
+        df["equity_vol_20"] = df["returns"].rolling(20).std() * np.sqrt(252 * 24 * 60)
         
-        # Step 3 Enhanced: Price patterns
-        df["higher_high"] = (df["high"] > df["high"].shift(1)).astype(float)
-        df["lower_low"] = (df["low"] < df["low"].shift(1)).astype(float)
-        df["higher_close"] = (df["close"] > df["close"].shift(1)).astype(float)
+        # Gap detection (equity market characteristic)
+        df["gap_pct"] = (df["open"] - df["close"].shift(1)) / df["close"].shift(1)
         
-        # Step 3 Enhanced: Price-Volume divergence
-        price_trend = df["close"].diff(5).apply(np.sign)
-        volume_trend = df["volume"].diff(5).apply(np.sign)
-        df["pv_divergence"] = (price_trend != volume_trend).astype(float)
+        # Simple trend persistence
+        df["trend_persistence"] = df["returns"].rolling(10).apply(
+            lambda x: (x > 0).sum() / len(x) if len(x) > 0 else 0.5,
+            raw=False
+        )
         
-        # Step 3 Enhanced: Candle patterns
-        df["body_size"] = abs(df["close"] - df["open"]) / (df["high"] - df["low"] + 1e-8)
-        df["upper_shadow"] = (df["high"] - df[["close", "open"]].max(axis=1)) / (df["high"] - df["low"] + 1e-8)
-        df["lower_shadow"] = (df[["close", "open"]].min(axis=1) - df["low"]) / (df["high"] - df["low"] + 1e-8)
-        
-        # Step 3 Enhanced: Relative price position
-        df["price_position_5"] = (df["close"] - df["low"].rolling(5).min()) / (df["high"].rolling(5).max() - df["low"].rolling(5).min() + 1e-8)
-        df["price_position_20"] = (df["close"] - df["low"].rolling(20).min()) / (df["high"].rolling(20).max() - df["low"].rolling(20).min() + 1e-8)
-        
-        # Step 3 Enhanced: Rate of change
-        df["roc_5"] = df["close"].pct_change(5)
-        df["roc_10"] = df["close"].pct_change(10)
-        
-        # Step 3 v2: Orderbook-like features (simulated from price action)
-        # These approximate orderbook dynamics when live orderbook not available
-        df["bid_ask_spread_pct"] = df["atr_pct"] * 0.1  # Spread approximation
-        df["bid_side_pressure"] = (df["close"] - df["low"]) / (df["high"] - df["low"] + 1e-8)
-        df["ask_side_pressure"] = (df["high"] - df["close"]) / (df["high"] - df["low"] + 1e-8)
-        df["imbalance_ratio"] = df["bid_side_pressure"] / (df["ask_side_pressure"] + 1e-8)
-        df["imbalance_ratio"] = df["imbalance_ratio"].clip(0.1, 10)  # Clip extremes
-        
-        # Depth ratio approximation (based on volume and volatility)
-        df["depth_ratio"] = df["volume_ratio"] / (df["atr_pct"] + 1e-8)
-        df["depth_ratio"] = df["depth_ratio"].clip(0.1, 100)
-        
-        # Step 3 v2: Funding rate proxy (from momentum divergence)
-        # Positive when momentum is bullish, negative when bearish
-        short_mom = df["close"].pct_change(8)  # ~8 hours
-        long_mom = df["close"].pct_change(24)  # ~1 day
-        df["funding_proxy"] = (short_mom - long_mom) * 100  # Scaled funding proxy
-        df["funding_proxy"] = df["funding_proxy"].clip(-0.1, 0.1)
-        
-        # Step 3 v2: Mean reversion signals
-        df["zscore_20"] = (df["close"] - df["sma_20"]) / (df["close"].rolling(20).std() + 1e-8)
-        df["zscore_50"] = (df["close"] - df["sma_50"]) / (df["close"].rolling(50).std() + 1e-8)
-        
-        # Step 3 v2: Volatility regime
-        vol_short = df["returns"].rolling(5).std()
-        vol_long = df["returns"].rolling(50).std()
-        df["vol_regime"] = vol_short / (vol_long + 1e-8)  # >1 = high vol regime
+        # Time-based (hour of day for equity market patterns)
+        if "timestamp" in df.columns:
+            df["hour_of_day"] = pd.to_datetime(df["timestamp"], unit="s").dt.hour / 24.0
+        else:
+            df["hour_of_day"] = 0.0
         
         # Fill NaN values
         df = df.ffill().bfill()

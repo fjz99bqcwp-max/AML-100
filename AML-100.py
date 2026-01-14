@@ -464,6 +464,11 @@ Examples:
         help="Run quick training (reduced epochs for cycle retrains)"
     )
     parser.add_argument(
+        "--reset-defaults",
+        action="store_true",
+        help="Reset params.json and objectives.json to SPEC defaults before backtest"
+    )
+    parser.add_argument(
         "--days",
         type=int,
         default=30,
@@ -500,10 +505,63 @@ Examples:
     setup_logging(args.log_level)
     logger = logging.getLogger(__name__)
     
+    # SPEC: Reset to defaults before backtest
+    if args.reset_defaults:
+        import shutil
+        log_info("🔒 Resetting to SPEC defaults (TP 0.5%, SL 0.25%, pos 40%, leverage 1x)")
+        
+        # Copy default configs
+        default_params = PROJECT_ROOT / "config" / "params_default.json"
+        default_objectives = PROJECT_ROOT / "config" / "objectives_default.json"
+        
+        if default_params.exists():
+            shutil.copy(default_params, PROJECT_ROOT / "config" / "params.json")
+            log_success("Reset params.json to SPEC defaults")
+        else:
+            log_warning("params_default.json not found - creating from spec")
+            # Create inline if missing
+            spec_params = {
+                "trading": {
+                    "take_profit_pct": 0.5,
+                    "stop_loss_pct": 0.25,
+                    "position_size_pct": 40.0,
+                    "leverage": 1,
+                    "dynamic_tp_sl": False,
+                    "vol_scaling": False
+                },
+                "ml_model": {
+                    "lstm_hidden_size": 128,
+                    "lstm_num_layers": 2,
+                    "learning_rate": 0.0001,
+                    "epsilon_decay": 0.997,
+                    "num_workers": 6,
+                    "enable_torch_compile": True
+                }
+            }
+            with open(PROJECT_ROOT / "config" / "params.json", "w") as f:
+                json.dump(spec_params, f, indent=2)
+            log_success("Created params.json with SPEC defaults")
+        
+        if default_objectives.exists():
+            shutil.copy(default_objectives, PROJECT_ROOT / "config" / "objectives.json")
+            log_success("Reset objectives.json to SPEC defaults (15% monthly, Sharpe ≥1.5, DD ≤5%)")
+        else:
+            log_warning("objectives_default.json not found - creating from spec")
+            spec_objectives = {
+                "monthly_return_pct_min": 15.0,
+                "sharpe_ratio_min": 1.5,
+                "drawdown_max": 5.0,
+                "auto_stop_drawdown": 5.0,
+                "wallet_address": "0x12045C1Cc410461B24e4293Dd05e2a6c47ebb584"
+            }
+            with open(PROJECT_ROOT / "config" / "objectives.json", "w") as f:
+                json.dump(spec_objectives, f, indent=2)
+            log_success("Created objectives.json with SPEC defaults")
+    
     # Import after logging is configured
     from src.main import AMLHFTSystem, main as run_main
     
-    # HFT mode: override params if --hft flag is set
+    # HFT mode: override params if --hft flag is set (after reset-defaults)
     if args.hft:
         import json
         params_path = PROJECT_ROOT / "config" / "params.json"

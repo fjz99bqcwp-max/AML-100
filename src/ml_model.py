@@ -42,32 +42,38 @@ logger = logging.getLogger(__name__)
 
 class LSTMFeatureExtractor(nn.Module):
     """
-    LSTM network for temporal feature extraction from market data
-    Captures sequential patterns in price/volume data
+    LSTM network for temporal feature extraction from market data.
+    Strict spec: 2 layers, hidden_size=128 for XYZ100-USDC perps.
+    Captures sequential patterns in price/volume data.
     """
+    
+    # Spec defaults - DO NOT MODIFY
+    SPEC_HIDDEN_SIZE = 128
+    SPEC_NUM_LAYERS = 2
     
     def __init__(
         self,
         input_size: int,
-        hidden_size: int = 128,
-        num_layers: int = 2,
+        hidden_size: int = 128,  # Spec: 128
+        num_layers: int = 2,     # Spec: 2 layers
         dropout: float = 0.2
     ):
         super().__init__()
         
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
+        # Enforce spec defaults
+        self.hidden_size = self.SPEC_HIDDEN_SIZE
+        self.num_layers = self.SPEC_NUM_LAYERS
         
         self.lstm = nn.LSTM(
             input_size=input_size,
-            hidden_size=hidden_size,
-            num_layers=num_layers,
+            hidden_size=self.SPEC_HIDDEN_SIZE,
+            num_layers=self.SPEC_NUM_LAYERS,
             batch_first=True,
-            dropout=dropout if num_layers > 1 else 0,
+            dropout=dropout if self.SPEC_NUM_LAYERS > 1 else 0,
             bidirectional=False
         )
         
-        self.layer_norm = nn.LayerNorm(hidden_size)
+        self.layer_norm = nn.LayerNorm(self.SPEC_HIDDEN_SIZE)
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x shape: (batch, seq_len, features)
@@ -82,21 +88,28 @@ class LSTMFeatureExtractor(nn.Module):
 
 class DQNHead(nn.Module):
     """
-    Deep Q-Network head for action value estimation
-    Outputs Q-values for: Hold, Buy, Sell
+    Deep Q-Network head for action value estimation.
+    Strict spec: 3 actions only (HOLD=0, BUY=1, SELL=2).
+    Outputs Q-values for XYZ100-USDC perps trading.
     """
+    
+    # Spec defaults - DO NOT MODIFY
+    SPEC_NUM_ACTIONS = 3  # HOLD, BUY, SELL only
     
     def __init__(
         self,
         input_size: int,
         hidden_size: int = 256,
-        num_actions: int = 3
+        num_actions: int = 3  # Spec: 3 actions only
     ):
         super().__init__()
         
+        # Enforce spec: exactly 3 actions
+        self.num_actions = self.SPEC_NUM_ACTIONS
+        
         self.fc1 = nn.Linear(input_size, hidden_size)
         self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.fc3 = nn.Linear(hidden_size, num_actions)
+        self.fc3 = nn.Linear(hidden_size, self.SPEC_NUM_ACTIONS)
         
         self.dropout = nn.Dropout(0.1)
         
@@ -377,33 +390,50 @@ class TrainingMetrics:
 
 class MLModel:
     """
-    High-level ML model manager for HFT
-    Handles training, inference, and model management
+    High-level ML model manager for HFT.
+    STRICT SPEC: LSTM(2 layers, 128 hidden) + DQN(3 actions).
+    Handles training, inference, and model management.
     """
     
-    # Action mapping
+    # Action mapping - SPEC: 3 actions only
     HOLD = 0
     BUY = 1
     SELL = 2
     ACTION_NAMES = {0: "HOLD", 1: "BUY", 2: "SELL"}
     
+    # SPEC DEFAULTS - enforced regardless of config
+    SPEC_DEFAULTS = {
+        "lstm_hidden_size": 128,
+        "lstm_num_layers": 2,
+        "dqn_hidden_size": 256,
+        "num_actions": 3,
+        "learning_rate": 0.0001,
+        "epsilon_decay": 0.997,
+        "num_workers": 6,  # Optimized for M4 MPS
+    }
+    
     def __init__(
         self,
         config_path: str = "config/params.json",
-        model_dir: str = "models"
+        model_dir: str = "models",
+        reset_defaults: bool = False
     ):
         # Load config
         with open(config_path, "r") as f:
             self.config = json.load(f)
         
         self.ml_config = self.config.get("ml_model", {})
+        
+        # SPEC: Enforce defaults on init
+        self._apply_spec_defaults()
+        
         self.model_dir = Path(model_dir)
         self.model_dir.mkdir(parents=True, exist_ok=True)
         
         # Determine device (prefer MPS on M4 Mac)
         if torch.backends.mps.is_available():
             self.device = torch.device("mps")
-            logger.info("Using MPS (Metal Performance Shaders) for acceleration")
+            logger.info("🍎 Using MPS (Metal Performance Shaders) for M4 acceleration")
         elif torch.cuda.is_available():
             self.device = torch.device("cuda")
             logger.info("Using CUDA for acceleration")
@@ -424,7 +454,7 @@ class MLModel:
         self.scaler = GradScaler(enabled=self.device.type == 'cuda')
         
         # Early stopping and checkpointing
-        self.early_stop_patience = self.ml_config.get("early_stop_patience", 15)
+        self.early_stop_patience = self.ml_config.get("early_stop_patience", 30)
         self.min_reward_delta = self.ml_config.get("min_reward_delta", 0.05)
         self.best_reward_ever = float("-inf")
         self.patience_counter = 0
@@ -462,33 +492,36 @@ class MLModel:
         self.input_size: int = 0
         self.sequence_length = self.ml_config.get("sequence_length", 60)
         self.epsilon = self.ml_config.get("epsilon_start", 1.0)
-        self.epsilon_end = self.ml_config.get("epsilon_end", 0.01)
-        self.epsilon_decay = self.ml_config.get("epsilon_decay", 0.995)
+        self.epsilon_end = self.ml_config.get("epsilon_end", 0.05)
+        self.epsilon_decay = self.SPEC_DEFAULTS["epsilon_decay"]  # SPEC: 0.997
         self.gamma = self.ml_config.get("gamma", 0.99)
         
-        # Supervised guidance (Step 2)
-        self.supervised_gamma = self.ml_config.get("supervised_gamma", 0.1)
-        self.use_supervised_guidance = self.ml_config.get("use_supervised_guidance", True)
+        # SPEC: Disable supervised guidance and FGSM - pure DQN
+        self.supervised_gamma = 0.0
+        self.use_supervised_guidance = False
         
-        # FGSM adversarial training (Step 5)
-        self.use_fgsm = self.ml_config.get("use_fgsm", True)
-        self.fgsm_weight = self.ml_config.get("fgsm_weight", 0.1)
-        self.fgsm_epsilon = self.ml_config.get("fgsm_epsilon", 0.01)
+        # SPEC: Disable FGSM adversarial training
+        self.use_fgsm = False
+        self.fgsm_weight = 0.0
+        self.fgsm_epsilon = 0.0
         
-        # Step 4: A2C/PPO configuration
-        self.rl_algo = self.ml_config.get("rl_algo", "DQN")  # "DQN" or "A2C"
-        self.ac_model: Optional[HybridLSTMActorCritic] = None
-        self.ppo_clip_epsilon = self.ml_config.get("ppo_clip_epsilon", 0.2)
-        self.entropy_coef = self.ml_config.get("entropy_coef", 0.01)
-        self.value_loss_coef = self.ml_config.get("value_loss_coef", 0.5)
-        self.gae_lambda = self.ml_config.get("gae_lambda", 0.95)
-        self.ppo_epochs = self.ml_config.get("ppo_epochs", 4)  # Mini-epochs per update
+        # SPEC: DQN only - no A2C/PPO
+        self.rl_algo = "DQN"  # Enforced: DQN only
+        self.ac_model = None  # No actor-critic model
         
         # Feature columns for training
         self.feature_columns: List[str] = []
         
         # Metrics
         self.training_history: List[TrainingMetrics] = []
+        
+        logger.info(f"🔒 MLModel initialized with SPEC defaults: LSTM(2x128)+DQN(3), lr={self.SPEC_DEFAULTS['learning_rate']}, epsilon_decay={self.SPEC_DEFAULTS['epsilon_decay']}")
+    
+    def _apply_spec_defaults(self) -> None:
+        """Apply SPEC defaults to ml_config, overriding any custom values."""
+        for key, value in self.SPEC_DEFAULTS.items():
+            self.ml_config[key] = value
+        logger.debug(f"Applied SPEC defaults: {self.SPEC_DEFAULTS}")
     
     @staticmethod
     def _strip_compiled_prefix(state_dict: dict) -> dict:
@@ -496,38 +529,46 @@ class MLModel:
         return {k.replace('_orig_mod.', ''): v for k, v in state_dict.items()}
         
     def initialize_model(self, input_size: int) -> None:
-        """Initialize model architecture with M4 optimizations"""
+        """Initialize model architecture with M4 MPS optimizations.
+        STRICT SPEC: LSTM(2 layers, 128 hidden) + DQN(3 actions).
+        """
         self.input_size = input_size
         
-        # Get config values with updated defaults for M4
-        lstm_hidden = self.ml_config.get("lstm_hidden_size", 64)   # Reduced from 128
-        lstm_layers = self.ml_config.get("lstm_num_layers", 1)     # Reduced from 2
-        dqn_hidden = self.ml_config.get("dqn_hidden_size", 256)
+        # SPEC DEFAULTS - ENFORCED (ignore config overrides)
+        lstm_hidden = 128   # Spec: 128 hidden size
+        lstm_layers = 2     # Spec: 2 layers
+        dqn_hidden = 256    # DQN hidden layer size
+        num_actions = 3     # Spec: HOLD, BUY, SELL only
+        
+        logger.info(f"🔒 Initializing STRICT LSTM+DQN: LSTM({lstm_layers}x{lstm_hidden}) + DQN({num_actions} actions)")
         
         self.model = HybridLSTMDQN(
             input_size=input_size,
             lstm_hidden=lstm_hidden,
             lstm_layers=lstm_layers,
             dqn_hidden=dqn_hidden,
-            num_actions=3,
+            num_actions=num_actions,
             dropout=self.ml_config.get("dropout", 0.2)
         ).to(self.device)
         
-        # TORCH.COMPILE FOR M4 OPTIMIZATION: 20% speedup, <0.5ms inference
-        if self.ml_config.get("enable_torch_compile", False):
+        # TORCH.COMPILE FOR M4 MPS OPTIMIZATION
+        if self.ml_config.get("enable_torch_compile", True):
             if hasattr(torch, 'compile'):
-                self.model = torch.compile(self.model, mode="reduce-overhead")
-                logger.info("🚀 torch.compile() enabled - M4 optimized for <0.5ms inference")
+                try:
+                    self.model = torch.compile(self.model, mode="reduce-overhead")
+                    logger.info("🚀 torch.compile() enabled - M4 MPS optimized for <0.5ms inference")
+                except Exception as e:
+                    logger.warning(f"⚠️ torch.compile() failed: {e}, using eager mode")
             else:
                 logger.warning("⚠️ torch.compile() not available (requires PyTorch >=2.0)")
         
-        # Target network for stable Q-learning
+        # Target network for stable Q-learning (same spec architecture)
         self.target_model = HybridLSTMDQN(
             input_size=input_size,
             lstm_hidden=lstm_hidden,
             lstm_layers=lstm_layers,
             dqn_hidden=dqn_hidden,
-            num_actions=3,
+            num_actions=num_actions,
             dropout=self.ml_config.get("dropout", 0.2)
         ).to(self.device)
         
@@ -536,18 +577,20 @@ class MLModel:
         self.target_model.load_state_dict(state_dict)
         self.target_model.eval()
         
+        # Optimizer with SPEC learning rate
+        spec_lr = 0.0001  # Spec: learning_rate 0.0001
         self.optimizer = optim.Adam(
             self.model.parameters(),
-            lr=self.ml_config.get("learning_rate", 0.001)
+            lr=spec_lr
         )
         
-        # Learning rate scheduler - less aggressive to allow continued learning
+        # Learning rate scheduler
         self.scheduler = ReduceLROnPlateau(
             self.optimizer,
             mode='max',
-            factor=self.ml_config.get("lr_scheduler_factor", 0.5),  # Gentler drop
-            patience=self.ml_config.get("lr_scheduler_patience", 5),  # More patience
-            min_lr=1e-4  # Higher min_lr to keep learning
+            factor=self.ml_config.get("lr_scheduler_factor", 0.5),
+            patience=self.ml_config.get("lr_scheduler_patience", 10),
+            min_lr=1e-5
         )
         
         self.replay_buffer = ReplayBuffer(
@@ -559,11 +602,11 @@ class MLModel:
         self.patience_counter = 0
         self.epoch_times = []
         
-        # Step 2: Reward threshold stopping
-        self.reward_threshold_stop = self.ml_config.get("reward_threshold_stop", -40)
-        self.reward_threshold_epochs = self.ml_config.get("reward_threshold_epochs", 10)
+        # Reward threshold stopping
+        self.reward_threshold_stop = self.ml_config.get("reward_threshold_stop", -0.3)
+        self.reward_threshold_epochs = self.ml_config.get("reward_threshold_epochs", 20)
         
-        logger.info(f"✅ Model initialized: input_size={input_size}, LSTM={lstm_hidden}x{lstm_layers}, compile={self.ml_config.get('enable_torch_compile', False)}")
+        logger.info(f"✅ Model initialized: input_size={input_size}, LSTM=2x128, DQN=3 actions, lr={spec_lr}")
     
     def initialize_a2c_model(self, input_size: int) -> None:
         """
@@ -610,38 +653,84 @@ class MLModel:
         logger.info(f"A2C/PPO model initialized with input_size={input_size}")
     
     def prepare_features(self, df: pd.DataFrame) -> Tuple[np.ndarray, List[str]]:
-        """Prepare feature matrix from DataFrame - Step 3 v2 with expanded features"""
-        # Select numeric columns for features (expanded from 23 to 35+)
+        """
+        Prepare feature matrix from DataFrame.
+        SIMPLIFIED: Only equity-specific basics - OHLCV, returns, volume, and time-based.
+        NO additional indicators (RSI, ATR, MACD, etc.) per spec.
+        """
+        # SPEC: Only basic OHLCV-derived features for XYZ100-USDC equity perps
         feature_cols = [
-            # Price action
+            # Price action basics
             "returns", "log_returns",
-            # Moving averages
-            "sma_7", "sma_14", "sma_21", "sma_50",
-            "ema_7", "ema_14", "ema_21", "ema_50",
-            # Core indicators
-            "rsi", "macd", "macd_signal", "macd_hist",
-            "bb_width", "bb_position",
-            "atr_pct", "volume_ratio",
-            # Momentum
-            "momentum_5", "momentum_10", "momentum_20",
-            "volatility", "adx",
-            # Step 3 Enhanced: Price patterns
-            "higher_high", "lower_low", "higher_close",
-            "pv_divergence", "body_size", "upper_shadow", "lower_shadow",
-            "price_position_5", "price_position_20", "roc_5", "roc_10",
-            # Step 3 v2: Orderbook-like features
-            "bid_ask_spread_pct", "bid_side_pressure", "ask_side_pressure",
-            "imbalance_ratio", "depth_ratio",
-            # Step 3 v2: Funding and regime
-            "funding_proxy", "zscore_20", "zscore_50", "vol_regime",
-            # Equity-specific features (XYZ100)
-            "equity_vol_5", "equity_vol_20", "implied_vol_proxy",
-            "mean_revert_signal", "gap_pct", "gap_filled",
-            "trend_persistence", "volume_spike",
-            # Nasdaq/Tech correlation features (NEW)
-            "tech_momentum", "tech_vol_regime", "tech_reversal_signal",
-            "hour_of_day", "tech_open_hour", "tech_close_hour"
+            # Volume
+            "volume_ratio",
+            # Time-based (equity market patterns)
+            "hour_of_day",
+            # Simple momentum (price-based only)
+            "momentum_5", "momentum_10",
+            # Volatility (from returns, not ATR)
+            "volatility",
+            # Equity-specific basics
+            "equity_vol_5", "equity_vol_20",
+            "gap_pct", "trend_persistence",
+            # Simple moving average spreads (no complex indicators)
+            "sma_spread_7_21", "sma_spread_7_50",
         ]
+        
+        # Add computed basic features if not present
+        df = df.copy()
+        
+        # Basic returns
+        if "returns" not in df.columns:
+            df["returns"] = df["close"].pct_change()
+        if "log_returns" not in df.columns:
+            df["log_returns"] = np.log(df["close"] / df["close"].shift(1))
+        
+        # Volume ratio (simple)
+        if "volume_ratio" not in df.columns:
+            vol_ma = df["volume"].rolling(20).mean()
+            df["volume_ratio"] = df["volume"] / vol_ma.clip(lower=1)
+        
+        # Hour of day
+        if "hour_of_day" not in df.columns:
+            if "timestamp" in df.columns:
+                df["hour_of_day"] = pd.to_datetime(df["timestamp"], unit="s").dt.hour / 24.0
+            else:
+                df["hour_of_day"] = 0.0
+        
+        # Simple momentum
+        if "momentum_5" not in df.columns:
+            df["momentum_5"] = df["close"] / df["close"].shift(5) - 1
+        if "momentum_10" not in df.columns:
+            df["momentum_10"] = df["close"] / df["close"].shift(10) - 1
+        
+        # Volatility from returns
+        if "volatility" not in df.columns:
+            df["volatility"] = df["returns"].rolling(20).std() * np.sqrt(252 * 24 * 60)
+        
+        # Equity vol basics
+        if "equity_vol_5" not in df.columns:
+            df["equity_vol_5"] = df["returns"].rolling(5).std() * np.sqrt(252 * 24 * 60)
+        if "equity_vol_20" not in df.columns:
+            df["equity_vol_20"] = df["returns"].rolling(20).std() * np.sqrt(252 * 24 * 60)
+        
+        # Gap and trend
+        if "gap_pct" not in df.columns:
+            df["gap_pct"] = (df["open"] - df["close"].shift(1)) / df["close"].shift(1)
+        if "trend_persistence" not in df.columns:
+            df["trend_persistence"] = df["returns"].rolling(10).apply(
+                lambda x: (x > 0).sum() / len(x) if len(x) > 0 else 0.5, raw=False
+            )
+        
+        # Simple SMA spreads (no complex indicators)
+        if "sma_spread_7_21" not in df.columns:
+            sma_7 = df["close"].rolling(7).mean()
+            sma_21 = df["close"].rolling(21).mean()
+            df["sma_spread_7_21"] = (sma_7 - sma_21) / df["close"]
+        if "sma_spread_7_50" not in df.columns:
+            sma_7 = df["close"].rolling(7).mean()
+            sma_50 = df["close"].rolling(50).mean()
+            df["sma_spread_7_50"] = (sma_7 - sma_50) / df["close"]
         
         # Filter to available columns
         available_cols = [c for c in feature_cols if c in df.columns]

@@ -68,11 +68,7 @@ class SystemState:
 def _process_backtest_chunk(args):
     """
     Multiprocessing worker function to process a single backtest chunk.
-    Uses HYBRID RSI Mean-Reversion + ML Confirmation Strategy.
-    
-    RSI < 25: Oversold → BUY signal (expect bounce)
-    RSI > 75: Overbought → SELL signal (expect pullback)
-    ML model used as optional confirmation filter.
+    SPEC: Pure ML signals from LSTM+DQN model (no RSI/ADX indicators).
     """
     import torch
     import numpy as np
@@ -116,77 +112,42 @@ def _process_backtest_chunk(args):
         # Disable gradient computation for inference
         torch.set_grad_enabled(False)
         
-        # Create environment with longer hold time for RSI reversion
+        # Create environment with SPEC defaults (TP 0.5%, SL 0.25%)
+        tp_pct = params['trading'].get('take_profit_pct', 0.5)
+        sl_pct = params['trading'].get('stop_loss_pct', 0.25)
+        
         env = BacktestEnvironment(
             df=chunk_df.copy(),
             initial_capital=initial_capital,
             transaction_cost=params['backtest'].get('commission_pct', 0.0005),
             slippage=params['backtest'].get('slippage_pct', 0.015) / 100,
-            take_profit_pct=params['trading']['take_profit_pct'],
-            stop_loss_pct=params['trading']['stop_loss_pct'],
-            max_hold_bars=60  # 60-min hold for RSI mean reversion
+            take_profit_pct=tp_pct,
+            stop_loss_pct=sl_pct,
+            max_hold_bars=60  # 60-bar max hold
         )
         
         buy_signals = 0
         sell_signals = 0
         
-        # Regime detection parameters
-        adx_trend_threshold = params['trading'].get('adx_trend_threshold', 25)
-        rsi_oversold = params['trading'].get('rsi_oversold', 30)
-        rsi_overbought = params['trading'].get('rsi_overbought', 70)
-        
-        # Track momentum for trend-following (10-bar simple momentum)
-        momentum_window = 10
-        
-        # Process chunk with Hybrid Regime-Adaptive Strategy
+        # Process chunk with PURE ML signals (no indicator-based strategies)
         for i in range(seq_len, len(chunk_df) - 1):
-            row = chunk_df.iloc[i]
-            close_price = row['close']
-            rsi = row.get("rsi", 50) if not pd.isna(row.get("rsi")) else 50
-            adx = row.get("adx", 20) if not pd.isna(row.get("adx")) else 20
-            
-            # Calculate short-term momentum (10-bar price change %)
-            if i >= momentum_window:
-                price_10_bars_ago = chunk_df.iloc[i - momentum_window]['close']
-                momentum_pct = (close_price - price_10_bars_ago) / price_10_bars_ago * 100
-            else:
-                momentum_pct = 0.0
-            
-            action = 0  # Default: HOLD
-            
-            # REGIME DETECTION: Use ADX to decide strategy
-            if adx >= adx_trend_threshold:
-                # TRENDING MARKET → Follow the trend (momentum)
-                # Strong uptrend: momentum > 0.3% → BUY
-                # Strong downtrend: momentum < -0.3% → SELL
-                if momentum_pct > 0.3:
-                    action = 1  # BUY - ride the uptrend
-                    buy_signals += 1
-                elif momentum_pct < -0.3:
-                    action = 2  # SELL - ride the downtrend
-                    sell_signals += 1
-            else:
-                # RANGING MARKET → Mean reversion with RSI
-                if rsi < rsi_oversold:
-                    action = 1  # BUY - oversold, expect bounce
-                    buy_signals += 1
-                elif rsi > rsi_overbought:
-                    action = 2  # SELL - overbought, expect pullback
-                    sell_signals += 1
-            
-            # ML Confirmation Filter: Only block extreme disagreements
-            if action != 0 and model_state_dict is not None:
+            # Get ML prediction (pure LSTM+DQN signal)
+            if model_state_dict is not None and i >= seq_len:
                 feature_seq = features[i - seq_len:i]
                 with torch.no_grad():
                     ml_action, confidence, q_values = temp_model.predict(feature_seq)
                 
-                # Only block if ML VERY strongly predicts OPPOSITE direction
-                if action == 1 and ml_action == 2 and confidence > 0.9:
-                    action = 0  # Block BUY - ML very strongly predicts down
-                elif action == 2 and ml_action == 1 and confidence > 0.9:
-                    action = 0  # Block SELL - ML very strongly predicts up
+                action = ml_action  # Use pure ML signal
+                
+                # Track signals
+                if action == 1:
+                    buy_signals += 1
+                elif action == 2:
+                    sell_signals += 1
+            else:
+                action = 0  # Default HOLD if no model
             
-            position_size_pct = params['trading']['position_size_pct']
+            position_size_pct = params['trading'].get('position_size_pct', 40.0)
             reward, done = env.step(action, position_size_pct / 100, data_idx=i)
             
             if done:
@@ -958,7 +919,7 @@ class AMLHFTSystem:
                 initial_capital=self.objectives["starting_capital_backtest"],
                 take_profit_pct=params["take_profit_pct"],
                 stop_loss_pct=params["stop_loss_pct"],
-                max_hold_bars=60  # Hold longer for RSI reversion (60 min)
+                max_hold_bars=30  # 30-min hold for faster exits
             )
             
             # Strategy parameters

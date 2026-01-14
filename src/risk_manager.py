@@ -109,23 +109,63 @@ class RiskManager:
         self._metrics_update_time: float = 0.0
         
     async def initialize(self, starting_capital: float) -> None:
-        """Initialize risk manager with starting capital"""
+        """Initialize risk manager with starting capital and SDK wallet check"""
         self.starting_capital = starting_capital
         self.current_capital = starting_capital
         self.peak_capital = starting_capital
         self.daily_start_capital = starting_capital
         self.session_start_capital = starting_capital
         
-        # Step 4: Compounding tracking
+        # SPEC: Check wallet balance using HyperLiquid SDK
+        wallet_address = self.objectives.get("wallet_address", "0x12045C1Cc410461B24e4293Dd05e2a6c47ebb584")
+        await self._check_wallet_balance(wallet_address)
+        
+        # Compounding tracking
         self.profits_to_reinvest = 0.0
         self.reinvestment_rate = self.risk_config.get("reinvestment_rate", 0.5)  # 50% of profits
         
-        # Step 1: Register fill callback with API for real-time PnL updates
+        # Register fill callback with API for real-time PnL updates
         if hasattr(self.api, 'register_fill_callback'):
             self.api.register_fill_callback(self._on_fill_event)
             logger.info("Registered fill callback for real-time PnL tracking")
         
         logger.info(f"Risk manager initialized with ${starting_capital:,.2f}")
+    
+    async def _check_wallet_balance(self, wallet_address: str) -> Optional[float]:
+        """
+        SPEC: Check wallet balance using HyperLiquid SDK.
+        Integrates with wallet 0x12045C1Cc410461B24e4293Dd05e2a6c47ebb584.
+        """
+        try:
+            from hyperliquid.info import Info
+            from hyperliquid.utils import constants
+            
+            info = Info(constants.MAINNET_API_URL, skip_ws=True)
+            user_state = info.user_state(wallet_address)
+            
+            if user_state:
+                margin_summary = user_state.get("marginSummary", {})
+                account_value = float(margin_summary.get("accountValue", 0))
+                available_balance = float(margin_summary.get("totalMarginUsed", 0))
+                
+                logger.info(f"💰 Wallet {wallet_address[:10]}... balance: ${account_value:,.2f}")
+                
+                # Update current capital from actual wallet balance
+                if account_value > 0:
+                    self.current_capital = account_value
+                    self.peak_capital = max(self.peak_capital, account_value)
+                
+                return account_value
+            else:
+                logger.warning(f"⚠️ Could not fetch wallet state for {wallet_address[:10]}...")
+                return None
+                
+        except ImportError:
+            logger.warning("⚠️ hyperliquid-python-sdk not installed. Run: pip install hyperliquid-python-sdk")
+            return None
+        except Exception as e:
+            logger.error(f"❌ Error checking wallet balance: {e}")
+            return None
     
     async def _on_fill_event(self, fill_data: Dict[str, Any]) -> None:
         """Step 1: Handle fill event from WebSocket for real-time PnL"""
@@ -677,33 +717,29 @@ class RiskManager:
         atr: float = 0.0
     ) -> float:
         """
-        Step 2: Calculate dynamic stop loss based on ATR and volatility.
-        Uses tighter SL for faster realizations while respecting volatility.
+        SPEC: Fixed stop loss from config (no indicator-based dynamics).
+        Uses static SL percentage: 0.25% per spec.
         """
-        base_sl_pct = self.params["trading"]["stop_loss_pct"]
-        sl_mult = self.params["trading"].get("sl_mult", 1.0)  # Step 2: ATR multiplier
+        # SPEC: Use fixed SL from config, no ATR/volatility adjustment
+        base_sl_pct = self.params["trading"].get("stop_loss_pct", 0.25)
         
-        # Step 2: Use ATR-based SL if available for tighter stops
-        if atr > 0 and entry_price > 0:
-            # ATR-based SL: entry ± (ATR * multiplier)
-            atr_sl_distance = atr * sl_mult
-            atr_sl_pct = (atr_sl_distance / entry_price) * 100
-            
-            # Use tighter of ATR-based or percentage-based
-            sl_pct = min(atr_sl_pct, base_sl_pct)
-            logger.debug(f"ATR-based SL: {atr_sl_pct:.3f}% (ATR={atr:.2f}, mult={sl_mult})")
-        else:
-            # Fallback to volatility-adjusted percentage
+        # SPEC: Disable dynamic TP/SL - use fixed percentage
+        dynamic_enabled = self.params["trading"].get("dynamic_tp_sl", False)
+        
+        if dynamic_enabled:
+            # Only allow volatility adjustment if explicitly enabled (not spec default)
             if current_volatility > 0:
                 vol_factor = max(0.5, min(current_volatility / 0.02, 1.5))
                 sl_pct = base_sl_pct * vol_factor
             else:
                 sl_pct = base_sl_pct
+        else:
+            # SPEC DEFAULT: Fixed SL percentage
+            sl_pct = base_sl_pct
         
-        # Step 2: Enforce tighter bounds for faster realizations
-        min_sl_pct = self.params["trading"].get("min_stop_loss_pct", 0.15)
-        max_sl_pct = 1.5  # Tighter max for HFT
-        sl_pct = max(min_sl_pct, min(sl_pct, max_sl_pct))
+        # Enforce minimum bounds
+        min_sl_pct = self.params["trading"].get("min_stop_loss_pct", 0.08)
+        sl_pct = max(min_sl_pct, sl_pct)
         
         if side == "B":  # Long position
             sl_price = entry_price * (1 - sl_pct / 100)
@@ -721,30 +757,25 @@ class RiskManager:
         atr: float = 0.0
     ) -> float:
         """
-        Step 2: Calculate dynamic take profit based on ATR and signal strength.
-        Uses tighter TP for faster realizations.
+        SPEC: Fixed take profit from config (no indicator-based dynamics).
+        Uses static TP percentage: 0.5% per spec.
         """
-        base_tp_pct = self.params["trading"]["take_profit_pct"]
-        tp_mult = self.params["trading"].get("tp_mult", 1.5)  # Step 2: ATR multiplier
+        # SPEC: Use fixed TP from config, no ATR/signal adjustment
+        base_tp_pct = self.params["trading"].get("take_profit_pct", 0.5)
         
-        # Step 2: Use ATR-based TP if available
-        if atr > 0 and entry_price > 0:
-            # ATR-based TP: entry ± (ATR * multiplier)
-            atr_tp_distance = atr * tp_mult
-            atr_tp_pct = (atr_tp_distance / entry_price) * 100
-            
-            # Use the tighter of ATR or signal-adjusted percentage
-            signal_adj_tp = base_tp_pct * (1 + abs(signal_strength) * 0.5)
-            tp_pct = min(atr_tp_pct, signal_adj_tp)
-            logger.debug(f"ATR-based TP: {atr_tp_pct:.3f}% (ATR={atr:.2f}, mult={tp_mult})")
-        else:
-            # Fallback to signal strength adjustment
+        # SPEC: Disable dynamic TP/SL - use fixed percentage
+        dynamic_enabled = self.params["trading"].get("dynamic_tp_sl", False)
+        
+        if dynamic_enabled:
+            # Only allow signal adjustment if explicitly enabled (not spec default)
             tp_pct = base_tp_pct * (1 + abs(signal_strength) * 0.3)
+        else:
+            # SPEC DEFAULT: Fixed TP percentage
+            tp_pct = base_tp_pct
         
-        # Step 2: Enforce tighter bounds for faster realizations
-        min_tp_pct = self.params["trading"].get("min_take_profit_pct", 0.2)
-        max_tp_pct = 2.5  # Tighter max for HFT
-        tp_pct = max(min_tp_pct, min(tp_pct, max_tp_pct))
+        # Enforce minimum bounds
+        min_tp_pct = self.params["trading"].get("min_take_profit_pct", 0.15)
+        tp_pct = max(min_tp_pct, tp_pct)
         
         if side == "B":  # Long position
             tp_price = entry_price * (1 + tp_pct / 100)
