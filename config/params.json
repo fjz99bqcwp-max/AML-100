@@ -1,26 +1,45 @@
 {
     "trading": {
-        "take_profit_pct": 1.5,
-        "stop_loss_pct": 1.0,
-        "position_size_pct": 20.0,
+        "take_profit_pct": 2.103410367339476,
+        "stop_loss_pct": 0.8,
+        "position_size_pct": 5.0,
         "leverage": 1,
-        "signal_threshold": 0.5,
-        "min_q_diff": 0.005
+        "signal_threshold": 0.0001,
+        "min_q_diff": 0.0005,
+        "max_portfolio_drawdown_pct": 5.0
     },
     "ml_model": {
         "lstm_hidden_size": 128,
         "lstm_num_layers": 2,
-        "learning_rate": 0.0001,
-        "epochs": 180,
-        "epsilon_decay": 0.997,
-        "early_stop_patience": 30,
-        "num_workers": 6,
-        "enable_torch_compile": true
+        "learning_rate": 0.00010493335689495956,
+        "epochs": 300,
+        "epsilon_decay": 0.98,
+        "epsilon_start": 1.0,
+        "epsilon_min": 0.05,
+        "early_stop_patience": 100,
+        "min_reward_delta": 0.001,
+        "num_workers": 8,
+        "enable_torch_compile": false,
+        "data_days": 180,
+        "action_balance_penalty": 0.1,
+        "bias_threshold": 0.6,
+        "lr_scheduler_factor": 0.7,
+        "lr_scheduler_patience": 30,
+        "lr_min": 1e-06
     },
     "backtest": {
         "commission_pct": 0.0005,
-        "slippage_pct": 0.02,
+        "slippage_pct": 0.01,
         "enable_multiprocessing": true,
-        "max_workers": 6
+        "max_workers": 8,
+        "default_days": 180
+    },
+    "reward": {
+        "pnl_scale": 20.0,
+        "streak_bonus": 0.1,
+        "drawdown_penalty": 0.3,
+        "vol_scale_factor": 1.0,
+        "hold_penalty_base": 0.005,
+        "max_consecutive_holds": 30
     }
 }

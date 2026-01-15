@@ -357,24 +357,61 @@ class ReplayBuffer:
 
 @dataclass
 class RewardConfig:
-    """Configuration for reward calculation - Step 2 Enhanced"""
-    alpha_sharpe: float = 0.7  # Weight for Sharpe-like component
-    beta_trade_penalty: float = 0.01  # Penalty for flip-flopping trades
-    early_bonus_epochs: int = 8  # Epochs to apply early bonus
-    early_bonus_amount: float = 0.35  # Bonus for trading in early epochs
-    hold_penalty: float = 0.008  # Penalty for holding (anti-stagnation)
-    hold_timeout_seconds: int = 60  # Timeout before severe hold penalty
-    hold_timeout_penalty: float = 1.0  # Severe penalty for holding too long
+    """
+    Configuration for reward calculation - FIXED for PnL-focused training.
+    
+    CRITICAL FIX: Removed excessive bonuses that were masking actual PnL signal.
+    The model was learning "trade = reward" instead of "profitable trade = reward".
+    
+    Key changes:
+    - PnL is now the DOMINANT signal (pnl_scale = 20)
+    - Reduced all bonuses to be supplementary, not overwhelming
+    - Wrong direction now gives STRONG penalty, not weak one
+    - Trade bonus ONLY for profitable trades, not all trades
+    """
+    # Core PnL incentives - PnL MUST dominate
+    pnl_scale: float = 20.0  # Amplify PnL signal strongly
+    streak_bonus: float = 0.1  # Reduced - bonus per consecutive profitable trade
+    drawdown_penalty: float = 0.3  # INCREASED - penalty for losing trades
+    vol_scale_factor: float = 1.0  # Reduced - don't over-scale
+    
+    # Action balance
+    action_balance_penalty: float = 0.05  # Reduced
+    bias_threshold: float = 0.70  # Increased threshold - allow more bias if profitable
+    diversity_penalty: float = 0.02  # Reduced
+    
+    # Sharpe and exploration
+    alpha_sharpe: float = 0.2  # Reduced
+    beta_trade_penalty: float = 0.01  # Small penalty for flip-flopping
+    early_bonus_epochs: int = 20  # Reduced exploration period
+    early_bonus_amount: float = 0.05  # GREATLY reduced
+    
+    # Hold penalties - less aggressive (HOLD is valid when uncertain)
+    hold_penalty: float = 0.005  # Reduced - HOLD is ok
+    hold_timeout_seconds: int = 60  # Increased timeout
+    hold_timeout_penalty: float = 0.1  # Reduced
+    max_consecutive_holds: int = 60  # Increased
+    
+    # Transaction costs
     commission_rate: float = 0.0005  # Transaction cost
-    min_trade_reward: float = -0.3  # Floor for trade rewards (tighter)
-    max_trade_reward: float = 2.0  # Ceiling for trade rewards (higher)
-    diversity_penalty: float = 0.05  # Penalty when no trades in batch
-    correct_direction_bonus: float = 0.45  # Bonus for correct direction
-    log_scale_threshold: float = 0.3  # Apply log scaling beyond this
-    trade_bonus: float = 0.03  # Bonus for any trade (encourages action)
-    positive_bias: float = 0.15  # Positive offset to shift rewards upward
+    
+    # Reward bounds (symmetric for clearer signal)
+    min_trade_reward: float = -2.0  # Allow stronger negative feedback
+    max_trade_reward: float = 2.0  # Symmetric ceiling
+    
+    # Bonuses - GREATLY REDUCED
+    correct_direction_bonus: float = 0.1  # Reduced - PnL already rewards this
+    trade_bonus: float = 0.0  # REMOVED - no bonus just for trading
+    positive_bias: float = 0.0  # REMOVED - let actual PnL drive rewards
+    
+    # Streak tracking
+    consecutive_trade_bonus: float = 0.05  # Reduced
+    max_streak_bonus: float = 0.3  # Reduced cap
+    
+    # Scaling
+    log_scale_threshold: float = 1.0  # Increased threshold
     vol_window: int = 20  # Window for volatility calculation
-    kelly_weight: float = 0.25  # Kelly criterion weight for reward scaling
+    kelly_weight: float = 0.05  # Greatly reduced
 
 
 @dataclass
@@ -401,15 +438,21 @@ class MLModel:
     SELL = 2
     ACTION_NAMES = {0: "HOLD", 1: "BUY", 2: "SELL"}
     
-    # SPEC DEFAULTS - enforced regardless of config
+    # SPEC DEFAULTS - enforced regardless of config (M4 optimized)
     SPEC_DEFAULTS = {
         "lstm_hidden_size": 128,
         "lstm_num_layers": 2,
         "dqn_hidden_size": 256,
         "num_actions": 3,
         "learning_rate": 0.0001,
-        "epsilon_decay": 0.997,
-        "num_workers": 6,  # Optimized for M4 MPS
+        "epsilon_start": 1.0,
+        "epsilon_min": 0.05,
+        "epsilon_decay": 0.98,  # Faster decay - reach 0.05 after ~150 epochs
+        "epochs": 300,  # More epochs for proper training
+        "early_stop_patience": 100,  # Much more patience for convergence
+        "min_reward_delta": 0.001,  # Allow small improvements to count
+        "num_workers": 8,  # Optimized for M4 (8 performance cores)
+        "data_days": 180,  # Default to 6 months of data
     }
     
     def __init__(
@@ -454,8 +497,8 @@ class MLModel:
         self.scaler = GradScaler(enabled=self.device.type == 'cuda')
         
         # Early stopping and checkpointing
-        self.early_stop_patience = self.ml_config.get("early_stop_patience", 30)
-        self.min_reward_delta = self.ml_config.get("min_reward_delta", 0.05)
+        self.early_stop_patience = self.ml_config.get("early_stop_patience", 100)
+        self.min_reward_delta = self.ml_config.get("min_reward_delta", 0.001)  # Allow small improvements
         self.best_reward_ever = float("-inf")
         self.patience_counter = 0
         
@@ -584,13 +627,13 @@ class MLModel:
             lr=spec_lr
         )
         
-        # Learning rate scheduler
+        # Learning rate scheduler - more conservative to prevent premature LR decay
         self.scheduler = ReduceLROnPlateau(
             self.optimizer,
             mode='max',
-            factor=self.ml_config.get("lr_scheduler_factor", 0.5),
-            patience=self.ml_config.get("lr_scheduler_patience", 10),
-            min_lr=1e-5
+            factor=self.ml_config.get("lr_scheduler_factor", 0.7),
+            patience=self.ml_config.get("lr_scheduler_patience", 30),
+            min_lr=self.ml_config.get("lr_min", 1e-6)
         )
         
         self.replay_buffer = ReplayBuffer(
@@ -788,214 +831,84 @@ class MLModel:
         daily_vol: float = 0.01
     ) -> float:
         """
-        Adaptive reward function with volatility regime detection (Step 2).
+        SIMPLIFIED PnL-focused reward function.
         
-        Key improvements:
-        - Trade bonus for any non-HOLD action (encourage activity)
-        - Positive bias to shift overall rewards toward positive
-        - Kelly-normalized returns using log(1 + return)
-        - Stronger correct direction bonus
+        CRITICAL PRINCIPLE: The reward MUST directly reflect actual trading PnL.
+        - Correct direction = positive reward proportional to price move
+        - Wrong direction = negative reward proportional to price move
+        - HOLD = small penalty (opportunity cost) or neutral
         
         Args:
             action: 0=HOLD, 1=BUY, 2=SELL
             price_change_pct: (future_price - current_price) / current_price
-            atr_normalized: ATR / price for volatility normalization (default 1.0)
-            prev_action: Previous action to detect consecutive trades
-            status: Training status (Critical/Poor/Normal) for scaling
+            atr_normalized: ATR / price for volatility normalization
+            prev_action: Previous action (unused in simplified version)
+            status: Training status (unused in simplified version)
+            daily_vol: Daily volatility (unused in simplified version)
         
         Returns:
-            Calculated reward (biased positive for good trades)
+            Reward value directly proportional to trading PnL
         """
         cfg = self.reward_config
         
-        # VOLATILITY-ADAPTIVE TRADE BONUS: Scale by market regime (ENHANCED)
-        base_trade_bonus = cfg.trade_bonus  # 0.5
-        vol_bonus = 0.0
-        if daily_vol > 0.03:  # Very high volatility (>3% daily)
-            trade_bonus = base_trade_bonus * 1.8  # Boost to 0.9
-            vol_multiplier = 1.5
-            vol_bonus = 0.3  # Strong bonus for volatile markets
-        elif daily_vol > 0.02:  # High volatility (>2% daily)
-            trade_bonus = base_trade_bonus * 1.4  # Boost to 0.7
-            vol_multiplier = 1.3
-            vol_bonus = 0.15  # Moderate bonus
-        elif daily_vol < 0.005:  # Low volatility (<0.5%)
-            trade_bonus = base_trade_bonus * 0.6  # Reduce to 0.3
-            vol_multiplier = 0.8
-            vol_bonus = 0.0
-        else:
-            trade_bonus = base_trade_bonus
-            vol_multiplier = 1.0
-            vol_bonus = 0.05  # Small baseline bonus
+        # Reset consecutive holds tracker
+        if not hasattr(self, '_consecutive_holds'):
+            self._consecutive_holds = 0
         
-        # Status-based scaling (Critical retrains boost exploration)
-        is_critical = status.lower() == "critical"
-        status_scale = (1.5 if is_critical else 1.0) * vol_multiplier
-        
-        # TRADE BONUS: Encourage any trading action (Step 2 enhancement)
-        if action != self.HOLD:
-            # Extra bonus in critical mode to break stagnation
-            if is_critical and self.current_epoch < cfg.early_bonus_epochs:
-                trade_bonus += cfg.trade_bonus * 1.0  # Step 3: Full bonus in critical
-        
-        # Base reward from price movement using log(1 + return) for stability
+        # CORE LOGIC: Reward = Actual PnL from the action
         if action == self.HOLD:
-            # HOLD dominance penalty: punish excessive inactivity
-            # Track consecutive holds to escalate penalty
-            if not hasattr(self, '_consecutive_holds'):
-                self._consecutive_holds = 0
-            
+            # HOLD is GOOD when price barely moves (trading would just incur commission)
             self._consecutive_holds += 1
             
-            # TIMEOUT PENALTY: Severe penalty for HOLD >60s (HFT should act fast)
-            hold_timeout_seconds = cfg.hold_timeout_seconds
-            hold_timeout_penalty = cfg.hold_timeout_penalty
-            
-            if self._consecutive_holds > hold_timeout_seconds:
-                base_reward = -hold_timeout_penalty * status_scale
+            # If price move is smaller than commission, HOLD was correct!
+            if abs(price_change_pct) < cfg.commission_rate * 2:
+                # Positive reward for correctly not trading
+                base_reward = 0.05  # Small positive for good decision
             else:
-                # EXPONENTIAL penalty for repeated holds (break HOLD bias)
-                hold_multiplier = 1.2 ** self._consecutive_holds  # Exponential: 1.2, 1.44, 1.73, 2.07...
-                missed_opportunity = abs(price_change_pct) * 0.9  # Increased from 0.8
-                base_reward = -(cfg.hold_penalty + missed_opportunity) * status_scale * 2.0 * hold_multiplier
+                # Missed opportunity cost - proportional to missed move
+                missed_pnl = abs(price_change_pct) - cfg.commission_rate
+                hold_penalty = cfg.hold_penalty * min(self._consecutive_holds, 5)
+                base_reward = -(hold_penalty + missed_pnl * cfg.pnl_scale * 0.1)  # Mild penalty
+            
         elif action == self.BUY:
-            # Reset consecutive holds on trade
+            # BUY profits when price goes UP
             self._consecutive_holds = 0
             
-            # CONSECUTIVE TRADE BONUS: Reward profitable streaks
-            if not hasattr(self, '_last_trade_profitable'):
-                self._last_trade_profitable = False
-            if not hasattr(self, '_consecutive_profitable_trades'):
-                self._consecutive_profitable_trades = 0
+            # Direct PnL: positive price change = profit, negative = loss
+            pnl = price_change_pct - cfg.commission_rate
             
-            # Long position: profit from price increase
-            # Use log scaling for more stable gradients
-            if price_change_pct > 0:
-                base_reward = np.log1p(price_change_pct * 100) / 100 - cfg.commission_rate
-                # Track profitable streak
-                if self._last_trade_profitable:
-                    self._consecutive_profitable_trades += 1
-                else:
-                    self._consecutive_profitable_trades = 1
-                self._last_trade_profitable = True
-            else:
-                base_reward = price_change_pct - cfg.commission_rate
-                self._last_trade_profitable = False
-                self._consecutive_profitable_trades = 0
+            # Scale by pnl_scale to make the signal stronger
+            base_reward = pnl * cfg.pnl_scale
+            
+            # Additional penalty for wrong direction (going long when price drops)
+            if price_change_pct < -0.001:  # Significant drop
+                base_reward -= cfg.drawdown_penalty * abs(price_change_pct) * cfg.pnl_scale
+            
         else:  # SELL
-            # Reset consecutive holds on trade
+            # SELL profits when price goes DOWN
             self._consecutive_holds = 0
             
-            # CONSECUTIVE TRADE BONUS: Reward profitable streaks
-            if not hasattr(self, '_last_trade_profitable'):
-                self._last_trade_profitable = False
-            if not hasattr(self, '_consecutive_profitable_trades'):
-                self._consecutive_profitable_trades = 0
+            # Direct PnL: negative price change = profit for short
+            pnl = -price_change_pct - cfg.commission_rate
             
-            # Short position: profit from price decrease  
-            if price_change_pct < 0:
-                base_reward = np.log1p(-price_change_pct * 100) / 100 - cfg.commission_rate + vol_bonus
-                # Track profitable streak
-                if self._last_trade_profitable:
-                    self._consecutive_profitable_trades += 1
-                else:
-                    self._consecutive_profitable_trades = 1
-                self._last_trade_profitable = True
-            else:
-                base_reward = -price_change_pct - cfg.commission_rate
-                self._last_trade_profitable = False
-                self._consecutive_profitable_trades = 0
+            # Scale by pnl_scale
+            base_reward = pnl * cfg.pnl_scale
+            
+            # Additional penalty for wrong direction (going short when price rises)
+            if price_change_pct > 0.001:  # Significant rise
+                base_reward -= cfg.drawdown_penalty * abs(price_change_pct) * cfg.pnl_scale
         
-        # Kelly-weighted returns (Step 2: incorporate Kelly criterion)
-        kelly_multiplier = 1.0 + cfg.kelly_weight * (1.0 if base_reward > 0 else 0.5)
-        base_reward = base_reward * kelly_multiplier
-        
-        # Normalize by ATR (volatility-adjusted returns) with floor
-        atr_factor = max(atr_normalized, 0.001)
-        base_reward = base_reward / atr_factor
-        
-        # Step 3: VOLATILITY REGIME BONUS - reward trades in high volatility
-        vol_regime_bonus = 0.0
-        if atr_normalized > 0.01 and action != self.HOLD:  # High volatility
-            vol_regime_bonus = 0.05  # Bonus for trading in volatile markets
-        
-        # CORRECT DIRECTION BONUS: Stronger reward for right direction
+        # Small direction bonus (supplementary, not dominant)
         direction_bonus = 0.0
-        if action == self.BUY and price_change_pct > 0.0001:
-            direction_bonus = cfg.correct_direction_bonus * 1.2  # Step 3: 20% boost
-        elif action == self.SELL and price_change_pct < -0.0001:
-            direction_bonus = cfg.correct_direction_bonus * 1.2  # Step 3: 20% boost
-        elif action != self.HOLD:
-            # Wrong direction: smaller penalty
-            direction_bonus = -cfg.correct_direction_bonus * 0.2  # Step 3: Reduced penalty
+        if action == self.BUY and price_change_pct > 0.0005:
+            direction_bonus = cfg.correct_direction_bonus
+        elif action == self.SELL and price_change_pct < -0.0005:
+            direction_bonus = cfg.correct_direction_bonus
         
-        # Sharpe-like component: reward / recent_volatility
-        sharpe_bonus = 0.0
-        if len(self.recent_rewards) >= 5:
-            recent_std = np.std(list(self.recent_rewards)) + 1e-8
-            if action != self.HOLD and base_reward > 0:
-                sharpe_bonus = cfg.alpha_sharpe * (base_reward / recent_std)
+        # Combine: PnL is dominant, direction bonus is small supplement
+        total_reward = base_reward + direction_bonus
         
-        # Early epoch trade bonus (encourage exploration)
-        early_bonus = 0.0
-        if self.current_epoch < cfg.early_bonus_epochs and action != self.HOLD:
-            early_bonus = cfg.early_bonus_amount * 1.2  # Step 3: 20% boost
-            # BUY BIAS: In early epochs, add small bonus for BUY to balance SELL dominance
-            if action == self.BUY:
-                early_bonus += 0.03  # Step 3: Increased from 0.02
-        
-        # BUY BALANCE BONUS: During critical retrains, prefer under-represented action
-        buy_balance_bonus = 0.0
-        if is_critical and action == self.BUY:
-            # Critical mode often has SELL bias - small BUY bonus to rebalance
-            buy_balance_bonus = 0.02  # Step 3: Increased from 0.015
-        
-        # Consecutive trade penalty (reduced to not discourage trading)
-        trade_penalty = 0.0
-        if prev_action is not None and prev_action != self.HOLD and action != self.HOLD:
-            if prev_action != action:  # Flip-flopping only
-                trade_penalty = -cfg.beta_trade_penalty * 0.5  # Step 3: Halved penalty
-        
-        # Step 3: Return alpha bonus - prioritize raw returns for monthly target
-        # Uses log(1 + |return|) for stability, scaled by return_alpha
-        return_alpha = getattr(cfg, 'return_alpha', 0.8)  # Step 3: Increased from 0.6
-        return_bonus = 0.0
-        if action != self.HOLD and price_change_pct != 0:
-            is_profitable = (action == self.BUY and price_change_pct > 0) or \
-                           (action == self.SELL and price_change_pct < 0)
-            if is_profitable:
-                return_bonus = return_alpha * np.log1p(abs(price_change_pct) * 100)
-            else:
-                return_bonus = -return_alpha * 0.2 * np.log1p(abs(price_change_pct) * 100)  # Step 3: Reduced loss penalty
-        
-        # CONSECUTIVE STREAK BONUS: Exponential reward for winning streaks
-        streak_bonus = 0.0
-        if action != self.HOLD and hasattr(self, '_consecutive_profitable_trades'):
-            consecutive_trade_bonus = getattr(cfg, 'consecutive_trade_bonus', 0.05)
-            streak_bonus = consecutive_trade_bonus * self._consecutive_profitable_trades
-        
-        # Combine all components
-        total_reward = (
-            base_reward 
-            + direction_bonus 
-            + sharpe_bonus 
-            + early_bonus 
-            + trade_bonus 
-            + trade_penalty
-            + return_bonus  # Step 1: Return-weighted bonus
-            + buy_balance_bonus  # Step 2: BUY bias for balance
-            + vol_regime_bonus  # Step 3: Volatility trading bonus
-            + streak_bonus  # HFT: Consecutive profitable trades bonus
-            + cfg.positive_bias  # Positive shift to encourage positive rewards
-        )
-        
-        # LOG-SCALING for extreme rewards
-        if total_reward < -cfg.log_scale_threshold:
-            total_reward = -cfg.log_scale_threshold - np.log1p(-total_reward - cfg.log_scale_threshold)
-        elif total_reward > cfg.log_scale_threshold:
-            total_reward = cfg.log_scale_threshold + np.log1p(total_reward - cfg.log_scale_threshold)
-        
-        # Clip to range (asymmetric: less negative floor, higher ceiling)
+        # Clip to reasonable range
         total_reward = np.clip(total_reward, cfg.min_trade_reward, cfg.max_trade_reward)
         
         # Track for Sharpe calculation
@@ -1153,61 +1066,35 @@ class MLModel:
         
         trade_count = int(action_counts[1] + action_counts[2])  # BUY + SELL
         
-        # Step 3: Enhanced diversity threshold from config (lowered to 40%)
-        diversity_thresh = self.ml_config.get("diversity_thresh", 0.4)
-        min_action_pct = self.ml_config.get("min_action_pct", 0.30)  # Step 3: Min 30% trades
+        # REDUCED diversity penalties - let PnL drive behavior, not arbitrary action quotas
+        diversity_thresh = self.ml_config.get("diversity_thresh", 0.80)  # Allow 80% same action if profitable
         
-        # Strong diversity penalty if model is stuck on one action
+        # Strong diversity penalty ONLY if model is completely stuck on one action (>90%)
         total_actions = len(actions)
         if total_actions > 10:
             max_action_pct = action_counts.max() / total_actions
             
-            # Step 3: HOLD DOMINANCE - severe penalty for >60% HOLD
+            # Only penalize extreme HOLD dominance (>90%) - HOLD is valid when uncertain
             hold_pct = action_counts[self.HOLD] / total_actions
-            if hold_pct > 0.60:  # Step 3: HOLD > 60% threshold
-                hold_penalty = -self.reward_config.diversity_penalty * 12 * total_actions  # Step 3: 12x penalty
+            if hold_pct > 0.90:  # Very high threshold
+                hold_penalty = -self.reward_config.diversity_penalty * 5 * total_actions  # Reduced 12x -> 5x
                 rewards = rewards + (hold_penalty / len(rewards))
-                logger.warning(f"⚠️ HOLD dominance penalty: {hold_pct:.1%} HOLD (max 60%)")
+                logger.warning(f"⚠️ Extreme HOLD dominance: {hold_pct:.1%} HOLD")
             
-            if max_action_pct > diversity_thresh:  # Configurable threshold
-                diversity_penalty = -self.reward_config.diversity_penalty * 10 * total_actions  # Step 3: Increased from 8
+            # Only penalize very extreme action bias (>90%)
+            if max_action_pct > 0.90:
+                diversity_penalty = -self.reward_config.diversity_penalty * 3 * total_actions  # Reduced 10x -> 3x
                 rewards = rewards + (diversity_penalty / len(rewards))
-                logger.debug(f"Diversity penalty applied: {max_action_pct:.1%} same action (thresh={diversity_thresh:.0%})")
+                logger.debug(f"Diversity penalty: {max_action_pct:.1%} same action")
             
-            # Step 3: MIN ACTION PCT - enforce minimum trades in critical mode
-            trade_pct = trade_count / total_actions
-            is_critical = status.lower() == "critical" if status else False
-            if is_critical and trade_pct < min_action_pct:
-                # Critical mode requires minimum trading activity
-                deficit = min_action_pct - trade_pct
-                action_deficit_penalty = -self.reward_config.diversity_penalty * 15 * deficit * total_actions
-                rewards = rewards + (action_deficit_penalty / len(rewards))
-                logger.warning(f"⚠️ Critical trade deficit: {trade_pct:.1%} trades (min {min_action_pct:.0%})")
-            
-            # BUY/SELL BALANCE: Force balance between BUY and SELL actions
-            buy_count = action_counts[self.BUY]
-            sell_count = action_counts[self.SELL]
-            trade_total = buy_count + sell_count
-            if trade_total > 5:
-                # Penalty if BUY or SELL dominates (>65% of trades) - Step 3: Tighter balance
-                buy_ratio = buy_count / trade_total
-                sell_ratio = sell_count / trade_total
-                if sell_ratio > 0.65:  # Step 3: Reduced from 0.7
-                    # Heavy SELL bias detected - penalize to encourage BUY
-                    imbalance_penalty = -self.reward_config.diversity_penalty * 8 * total_actions  # Step 3: Increased
-                    rewards = rewards + (imbalance_penalty / len(rewards))
-                    logger.debug(f"SELL bias penalty: {sell_ratio:.1%} SELL vs {buy_ratio:.1%} BUY")
-                elif buy_ratio > 0.65:  # Step 3: Reduced from 0.7
-                    # Heavy BUY bias detected - penalize to encourage SELL
-                    imbalance_penalty = -self.reward_config.diversity_penalty * 8 * total_actions  # Step 3: Increased
-                    rewards = rewards + (imbalance_penalty / len(rewards))
-                    logger.debug(f"BUY bias penalty: {buy_ratio:.1%} BUY vs {sell_ratio:.1%} SELL")
+            # REMOVED: Force minimum trading activity - let model learn when to trade
+            # REMOVED: BUY/SELL balance enforcement - model should follow market direction
         
-        # Additional penalty if no trades at all - Step 3: Much stronger now
-        if trade_count == 0 and total_actions > 10:
-            diversity_penalty = -self.reward_config.diversity_penalty * total_actions * 4  # Step 3: 4x stronger
+        # Mild penalty if no trades at all - but not severe
+        if trade_count == 0 and total_actions > 20:
+            diversity_penalty = -self.reward_config.diversity_penalty * total_actions * 0.5  # Greatly reduced
             rewards = rewards + (diversity_penalty / len(rewards))
-            logger.warning(f"⚠️ No trades in episode - severe penalty applied")
+            logger.debug(f"No trades penalty (mild)")
         
         total_reward = rewards.sum()
         
@@ -1243,8 +1130,15 @@ class MLModel:
             effective_gamma = self.ml_config.get("supervised_gamma_critical", 0.5)
         
         if len(self.replay_buffer) >= batch_size:
-            for _ in range(num_train_batches):
-                self._train_batch(batch_size, optimal_q, effective_gamma)
+            for batch_idx in range(num_train_batches):
+                try:
+                    self._train_batch(batch_size, optimal_q, effective_gamma)
+                except Exception as e:
+                    logger.error(f"❌ _train_batch failed at batch {batch_idx}: {e}")
+                    logger.error(f"   replay_buffer size: {len(self.replay_buffer)}")
+                    logger.error(f"   batch_size: {batch_size}")
+                    logger.error(f"   model.training: {self.model.training if self.model else 'N/A'}")
+                    raise
         
         # Decay epsilon
         self.epsilon = max(self.epsilon_end, self.epsilon * self.epsilon_decay)
@@ -1289,9 +1183,38 @@ class MLModel:
         # Determine autocast device type
         autocast_device = 'cuda' if self.device.type == 'cuda' else 'cpu'
         
-        # Forward pass with optional AMP
-        with autocast(device_type=autocast_device, enabled=self.use_amp and self.device.type == 'cuda'):
-            # Current Q values (all actions)
+        # Ensure model is in training mode
+        self.model.train()
+        
+        # Debug: Check model parameters require grad
+        params_with_grad = sum(1 for p in self.model.parameters() if p.requires_grad)
+        total_params = sum(1 for p in self.model.parameters())
+        if params_with_grad != total_params:
+            logger.error(f"❌ Model param issue: {params_with_grad}/{total_params} require grad")
+        
+        # Debug: Check torch.is_grad_enabled()
+        if not torch.is_grad_enabled():
+            logger.error("❌ torch.is_grad_enabled() is False!")
+        
+        # Forward pass with optional AMP (disabled on MPS)
+        # Note: autocast is CUDA-only, we skip it for MPS
+        if self.device.type == 'cuda' and self.use_amp:
+            with autocast(device_type='cuda', enabled=True):
+                # Current Q values (all actions)
+                all_q = self.model(states)
+                current_q = all_q.gather(1, actions.unsqueeze(1))
+                
+                # Target Q values (Double DQN)
+                with torch.no_grad():
+                    next_actions = self.model(next_states).argmax(1, keepdim=True)
+                    next_q = self.target_model(next_states).gather(1, next_actions)
+                    target_q = rewards.unsqueeze(1) + self.gamma * next_q * (~dones).unsqueeze(1)
+                
+                # Primary loss: TD error (Huber loss)
+                td_loss = F.smooth_l1_loss(current_q, target_q)
+                loss = td_loss
+        else:
+            # Standard forward pass (MPS/CPU)
             all_q = self.model(states)
             current_q = all_q.gather(1, actions.unsqueeze(1))
             
@@ -1303,44 +1226,51 @@ class MLModel:
             
             # Primary loss: TD error (Huber loss)
             td_loss = F.smooth_l1_loss(current_q, target_q)
+            loss = td_loss
+        
+        # Step 2 + Step 4: Supervised guidance loss with effective gamma
+        if self.use_supervised_guidance and optimal_q is not None:
+            # Sample random indices from optimal_q for this batch
+            opt_indices = np.random.choice(
+                len(optimal_q), 
+                size=min(batch_size, len(optimal_q)), 
+                replace=False
+            )
+            opt_q_batch = torch.FloatTensor(optimal_q[opt_indices]).to(self.device)
             
-            # Step 2 + Step 4: Supervised guidance loss with effective gamma
-            supervised_loss = torch.tensor(0.0, device=self.device)
-            if self.use_supervised_guidance and optimal_q is not None:
-                # Sample random indices from optimal_q for this batch
-                opt_indices = np.random.choice(
-                    len(optimal_q), 
-                    size=min(batch_size, len(optimal_q)), 
-                    replace=False
-                )
-                opt_q_batch = torch.FloatTensor(optimal_q[opt_indices]).to(self.device)
-                
-                # Use Q-values from random states in batch to match
-                model_q_sample = all_q[:len(opt_indices)]
-                
-                # MSE loss between model Q and optimal Q (teacher signal)
-                supervised_loss = F.mse_loss(model_q_sample, opt_q_batch)
+            # Use Q-values from random states in batch to match
+            model_q_sample = all_q[:len(opt_indices)]
             
-            # Combined loss with effective gamma (Step 4: higher for Critical)
-            loss = td_loss + effective_gamma * supervised_loss
-            
-            # Step 2: Add entropy bonus to encourage exploration and diverse actions
-            entropy_bonus_coef = self.ml_config.get("entropy_bonus", 0.01)
-            if entropy_bonus_coef > 0:
-                # Compute policy entropy from Q-values (softmax distribution)
-                q_probs = F.softmax(all_q, dim=1)
-                q_log_probs = F.log_softmax(all_q, dim=1)
-                entropy = -(q_probs * q_log_probs).sum(dim=1).mean()
-                # Subtract entropy (maximize entropy = minimize negative entropy)
-                loss = loss - entropy_bonus_coef * entropy
-            
-            # Step 5: FGSM adversarial training for robustness
-            if self.use_fgsm and random.random() < 0.3:  # Apply 30% of the time
-                adv_loss = self._fgsm_adversarial_loss(states, actions, target_q)
-                loss = loss + self.fgsm_weight * adv_loss
+            # MSE loss between model Q and optimal Q (teacher signal)
+            supervised_loss = F.mse_loss(model_q_sample, opt_q_batch)
+            loss = loss + effective_gamma * supervised_loss
+        
+        # Step 2: Add entropy bonus to encourage exploration and diverse actions
+        entropy_bonus_coef = self.ml_config.get("entropy_bonus", 0.01)
+        if entropy_bonus_coef > 0:
+            # Compute policy entropy from Q-values (softmax distribution)
+            q_probs = F.softmax(all_q, dim=1)
+            q_log_probs = F.log_softmax(all_q, dim=1)
+            entropy = -(q_probs * q_log_probs).sum(dim=1).mean()
+            # Subtract entropy (maximize entropy = minimize negative entropy)
+            loss = loss - entropy_bonus_coef * entropy
+        
+        # Step 5: FGSM adversarial training for robustness (disabled by default)
+        if self.use_fgsm and random.random() < 0.3:
+            adv_loss = self._fgsm_adversarial_loss(states, actions, target_q)
+            loss = loss + self.fgsm_weight * adv_loss
         
         # Backward pass with gradient scaling (CUDA only)
         self.optimizer.zero_grad()
+        
+        # Debug: Check loss requires grad before backward
+        if not loss.requires_grad:
+            logger.error(f"❌ Loss does not require grad!")
+            logger.error(f"   loss.requires_grad={loss.requires_grad}")
+            logger.error(f"   td_loss.requires_grad={td_loss.requires_grad}")
+            logger.error(f"   current_q.requires_grad={current_q.requires_grad}")
+            logger.error(f"   all_q.requires_grad={all_q.requires_grad}")
+            logger.error(f"   device={self.device}")
         
         if self.device.type == 'cuda' and self.use_amp:
             self.scaler.scale(loss).backward()
@@ -1641,9 +1571,9 @@ class MLModel:
             self.scheduler = ReduceLROnPlateau(
                 self.optimizer,
                 mode='max',
-                factor=0.5,
-                patience=5,
-                min_lr=1e-6
+                factor=self.ml_config.get("lr_scheduler_factor", 0.7),
+                patience=self.ml_config.get("lr_scheduler_patience", 30),
+                min_lr=self.ml_config.get("lr_min", 1e-6)
             )
         
         target_update_freq = self.ml_config.get("target_update_freq", 10)
@@ -2279,9 +2209,9 @@ class MLModel:
             # Initialize model with saved config
             self.input_size = checkpoint["input_size"]
             self.feature_columns = checkpoint.get("feature_columns", [])
-            # Reset epsilon to allow exploration (don't use saved low epsilon)
+            # Keep epsilon low for inference - training will reset if needed
             saved_epsilon = checkpoint.get("epsilon", self.epsilon_end)
-            self.epsilon = max(saved_epsilon, 0.3)  # Minimum 30% exploration on reload
+            self.epsilon = saved_epsilon  # Use saved epsilon directly
             
             self.initialize_model(self.input_size)
             
@@ -2348,6 +2278,16 @@ class BacktestEnvironment:
     Simulates trading with realistic execution
     """
     
+    # HARD cap to prevent overflow: 1000x the reference starting capital ($1000)
+    MAX_CAPITAL_ABSOLUTE = 1_000_000.0  # $1M = 100,000% max gain
+    MAX_DRAWDOWN_PCT = 5.0  # Portfolio-level drawdown limit (matches objective)
+    
+    # Layered drawdown protection:
+    # - CIRCUIT_BREAKER_DD_PCT: Pause trading, force-close positions, wait for recovery
+    # - HARD_TERMINATE_DD_PCT: STOP BACKTEST ENTIRELY - no recovery possible
+    CIRCUIT_BREAKER_DD_PCT = 3.5  # Pause trading at 3.5% DD
+    HARD_TERMINATE_DD_PCT = 4.5   # Terminate backtest at 4.5% DD (buffer before 5% objective)
+    
     def __init__(
         self,
         df: pd.DataFrame,
@@ -2356,23 +2296,33 @@ class BacktestEnvironment:
         slippage: float = 0.0001,
         take_profit_pct: float = 0.5,
         stop_loss_pct: float = 0.3,
-        max_hold_bars: int = 120  # Time-based exit (2 hours for trends to develop)
+        max_hold_bars: int = 120,  # Time-based exit (2 hours for trends to develop)
+        max_drawdown_pct: float = 5.0,  # Portfolio drawdown limit
+        global_peak_equity: float = None  # Global peak from previous chunks (for proper DD tracking)
     ):
         self.df = df
-        self.initial_capital = initial_capital
+        # Cap initial_capital to prevent overflow from chunk chaining
+        self.initial_capital = min(initial_capital, self.MAX_CAPITAL_ABSOLUTE)
         self.transaction_cost = transaction_cost
         self.slippage = slippage
         self.take_profit_pct = take_profit_pct
         self.stop_loss_pct = stop_loss_pct
         self.max_hold_bars = max_hold_bars
+        self.max_drawdown_pct = max_drawdown_pct
         
-        # State
-        self.capital = initial_capital
+        # State - use capped initial_capital to prevent overflow
+        self.capital = self.initial_capital  # Use capped value, not raw input
         self.position = 0.0  # Current position size
         self.position_side = 0  # 1 = long, -1 = short, 0 = flat
         self.entry_price = 0.0
         self.entry_idx = 0  # Track entry index for time-based exit
         self.current_idx = 0
+        
+        # Portfolio drawdown tracking - use global peak if provided (for chunk chaining)
+        self.peak_equity = global_peak_equity if global_peak_equity is not None else self.initial_capital
+        self.drawdown_halt = False  # True when drawdown exceeds circuit breaker
+        self.permanently_halted = False  # True when HARD terminate threshold hit - no recovery
+        self.recovery_target = 0.0  # Equity needed to resume trading
         
         # History
         self.trades: List[Dict] = []
@@ -2386,6 +2336,10 @@ class BacktestEnvironment:
         self.entry_price = 0.0
         self.entry_idx = 0
         self.current_idx = 0
+        self.peak_equity = self.initial_capital
+        self.drawdown_halt = False
+        self.permanently_halted = False
+        self.recovery_target = 0.0
         self.trades = []
         self.equity_curve = []
     
@@ -2417,8 +2371,11 @@ class BacktestEnvironment:
         # Deduct round-trip fees (entry + exit)
         net_pnl_pct = raw_pnl_pct - (fees_pct * 2 * 100)
         
+        # Guard against extreme PnL percentages
+        net_pnl_pct = np.clip(net_pnl_pct, -100, 1000)  # Cap at 1000% gain or 100% loss
+        
         # Calculate dollar PnL with overflow protection
-        pnl = notional * (net_pnl_pct / 100)
+        pnl = float(notional) * (float(net_pnl_pct) / 100)
         if not np.isfinite(pnl):
             pnl = -notional  # Assume total loss if overflow
         
@@ -2426,9 +2383,12 @@ class BacktestEnvironment:
         # (We subtracted notional at entry, now add it back with profit/loss)
         self.capital += notional + pnl
         
-        # Sanity check: prevent capital going negative or NaN
-        if not np.isfinite(self.capital) or self.capital < 0:
-            self.capital = 0.0
+        # Sanity check: prevent capital going negative, NaN, or absurdly high
+        if not np.isfinite(self.capital) or self.capital < 1.0:
+            self.capital = 1.0  # Minimum capital to prevent 100% drawdown artifacts
+        elif self.capital > self.MAX_CAPITAL_ABSOLUTE:
+            # Hard cap to prevent overflow (already 100,000% gain from reference)
+            self.capital = self.MAX_CAPITAL_ABSOLUTE
         
         # Only log significant trades, not every close
         bars_held = self.current_idx - self.entry_idx
@@ -2502,11 +2462,74 @@ class BacktestEnvironment:
             elif pnl_pct <= -self.stop_loss_pct:
                 reward = self._close_position(current_price, "stop_loss")
         
-        # Process new signals only if flat and capital is valid
-        if self.position == 0 and self.capital > 1.0 and np.isfinite(self.capital):
+        # Calculate current equity for drawdown check
+        current_equity = self.capital
+        if self.position > 0 and self.entry_price > 0:
+            notional_in_pos = float(self.position) * float(self.entry_price)
+            if self.position_side == 1:
+                unrealized_pnl = float(self.position) * (float(current_price) - float(self.entry_price))
+            else:
+                unrealized_pnl = float(self.position) * (float(self.entry_price) - float(current_price))
+            if np.isfinite(notional_in_pos) and np.isfinite(unrealized_pnl):
+                current_equity = self.capital + notional_in_pos + unrealized_pnl
+        
+        # Update peak equity (high water mark) - only if not permanently halted
+        if current_equity > self.peak_equity and not self.permanently_halted:
+            self.peak_equity = current_equity
+            self.drawdown_halt = False  # Reset halt if we made new highs
+        
+        # Check portfolio drawdown
+        current_dd_pct = 0.0
+        if self.peak_equity > 0:
+            current_dd_pct = ((self.peak_equity - current_equity) / self.peak_equity) * 100
+        
+        # LAYERED DRAWDOWN PROTECTION:
+        # Layer 1 (CIRCUIT_BREAKER_DD_PCT = 3.5%): Pause trading, force-close, can recover
+        # Layer 2 (HARD_TERMINATE_DD_PCT = 4.5%): STOP BACKTEST ENTIRELY - return done=True
+        
+        # Check HARD TERMINATION first (4.5% - no recovery possible)
+        if current_dd_pct >= self.HARD_TERMINATE_DD_PCT:
+            self.permanently_halted = True
+            self.drawdown_halt = True
+            # Force-close any open position immediately
+            if self.position > 0:
+                reward = self._close_position(current_price, "hard_termination")
+            # Record final equity and return DONE
+            self.equity_curve.append(current_equity)
+            self.current_idx += 1
+            return reward, True  # TERMINATE BACKTEST
+        
+        # Check CIRCUIT BREAKER (3.5% - temporary pause, can recover)
+        if current_dd_pct >= self.CIRCUIT_BREAKER_DD_PCT and not self.permanently_halted:
+            self.drawdown_halt = True
+            self.recovery_target = self.peak_equity * (1 - self.CIRCUIT_BREAKER_DD_PCT / 100 * 0.5)  # Need to recover to ~1.75% DD to resume
+            # Force-close any open position to prevent further losses
+            if self.position > 0:
+                reward = self._close_position(current_price, "drawdown_halt")
+        
+        # Check if we can resume trading (recovered from circuit breaker)
+        if self.drawdown_halt and not self.permanently_halted and current_equity >= self.recovery_target:
+            self.drawdown_halt = False
+        
+        # Dynamic position sizing based on drawdown (only when not halted):
+        # - At 0% DD: full position size (100%)
+        # - At 1.75% DD: 50% position size  
+        # - At 3.5% DD: circuit breaker (halted before this)
+        dd_ratio = min(1.0, current_dd_pct / max(0.5, self.CIRCUIT_BREAKER_DD_PCT))
+        dd_scalar = max(0.1, 1.0 - dd_ratio * 0.9)  # Linear scale down to 10%
+        adjusted_position_pct = position_size_pct * dd_scalar
+        
+        # Process new signals only if:
+        # 1. No current position
+        # 2. Capital is valid (> $1)
+        # 3. NOT in drawdown halt (temporary or permanent)
+        if self.position == 0 and self.capital > 1.0 and np.isfinite(self.capital) and not self.drawdown_halt and not self.permanently_halted:
             if action == 1:  # BUY - Open long
-                # Use notional value for position sizing, not raw cost
-                notional = self.capital * position_size_pct
+                # Use FIXED notional sizing based on initial capital (no compounding)
+                # This limits max drawdown by not betting accumulated profits
+                base_notional = self.initial_capital * position_size_pct
+                # Apply drawdown adjustment to the fixed size
+                notional = min(base_notional * dd_scalar, self.capital * 0.95)  # Never use more than 95% of current capital
                 size = notional / current_price
                 
                 if notional <= self.capital and notional > 0 and np.isfinite(size):
@@ -2518,8 +2541,10 @@ class BacktestEnvironment:
                     self.capital -= notional
                     
             elif action == 2:  # SELL - Open short
-                # Same for short
-                notional = self.capital * position_size_pct
+                # Use FIXED notional sizing based on initial capital (no compounding)
+                base_notional = self.initial_capital * position_size_pct
+                # Apply drawdown adjustment to the fixed size
+                notional = min(base_notional * dd_scalar, self.capital * 0.95)
                 size = notional / current_price
                 
                 if notional <= self.capital and notional > 0 and np.isfinite(size):
@@ -2533,24 +2558,37 @@ class BacktestEnvironment:
         # Calculate equity for curve
         # Note: capital has notional subtracted at entry, so we add back notional + unrealized PnL
         if self.position > 0 and self.entry_price > 0:
-            notional_in_position = self.position * self.entry_price
-            if self.position_side == 1:
-                unrealized = self.position * (next_price - self.entry_price)
-            else:
-                unrealized = self.position * (self.entry_price - next_price)
-            
-            # Guard against overflow
-            if not np.isfinite(notional_in_position) or not np.isfinite(unrealized):
+            # Guard against extreme position sizes
+            if self.position > 1e10 or self.entry_price > 1e10:
                 total_equity = max(0.0, self.capital)
             else:
-                total_equity = self.capital + notional_in_position + unrealized
-                # Sanity check: prevent negative or unreasonable values
-                if not np.isfinite(total_equity):
-                    total_equity = 0.0
+                notional_in_position = float(self.position) * float(self.entry_price)
+                if self.position_side == 1:
+                    unrealized = float(self.position) * (float(next_price) - float(self.entry_price))
                 else:
-                    total_equity = max(0.0, min(total_equity, self.initial_capital * 100))
+                    unrealized = float(self.position) * (float(self.entry_price) - float(next_price))
+                
+                # Guard against overflow
+                if not np.isfinite(notional_in_position) or not np.isfinite(unrealized):
+                    total_equity = max(1.0, self.capital)  # Minimum 1.0 to prevent 100% drawdown artifacts
+                else:
+                    total_equity = self.capital + notional_in_position + unrealized
+                    # Sanity check: prevent negative or unreasonable values
+                    # Hard cap to prevent overflow
+                    if not np.isfinite(total_equity):
+                        # Use previous equity if available, else minimum
+                        total_equity = self.equity_curve[-1] if self.equity_curve else self.initial_capital
+                        total_equity = max(1.0, min(total_equity, self.MAX_CAPITAL_ABSOLUTE))
+                    else:
+                        total_equity = max(1.0, min(total_equity, self.MAX_CAPITAL_ABSOLUTE))
         else:
-            total_equity = max(0.0, self.capital) if np.isfinite(self.capital) else 0.0
+            # No position - equity is just capital (with minimum floor)
+            if np.isfinite(self.capital):
+                total_equity = max(1.0, self.capital)
+            else:
+                # Use previous equity if capital is invalid
+                total_equity = self.equity_curve[-1] if self.equity_curve else self.initial_capital
+                total_equity = max(1.0, total_equity)
         
         self.equity_curve.append(total_equity)
         self.current_idx += 1

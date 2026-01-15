@@ -81,6 +81,7 @@ def _process_backtest_chunk(args):
     chunk_idx = chunk_info['chunk_idx']
     seq_len = chunk_info['seq_len']
     initial_capital = chunk_info['initial_capital']
+    global_peak_equity = chunk_info.get('global_peak_equity', initial_capital)  # Get global peak
     chunk_start_idx = chunk_info['chunk_start_idx']
     chunk_end_idx = chunk_info['chunk_end_idx']
     
@@ -109,12 +110,13 @@ def _process_backtest_chunk(args):
         temp_model.model.to(device)
         temp_model.model.eval()
         
-        # Disable gradient computation for inference
-        torch.set_grad_enabled(False)
+        # NOTE: Use torch.no_grad() context instead of torch.set_grad_enabled(False)
+        # to avoid globally disabling gradients for subsequent training phases
         
         # Create environment with SPEC defaults (TP 0.5%, SL 0.25%)
         tp_pct = params['trading'].get('take_profit_pct', 0.5)
         sl_pct = params['trading'].get('stop_loss_pct', 0.25)
+        max_dd = params['trading'].get('max_portfolio_drawdown_pct', 5.0)
         
         env = BacktestEnvironment(
             df=chunk_df.copy(),
@@ -123,7 +125,9 @@ def _process_backtest_chunk(args):
             slippage=params['backtest'].get('slippage_pct', 0.015) / 100,
             take_profit_pct=tp_pct,
             stop_loss_pct=sl_pct,
-            max_hold_bars=60  # 60-bar max hold
+            max_hold_bars=60,  # 60-bar max hold
+            max_drawdown_pct=max_dd,  # Portfolio-level drawdown limit
+            global_peak_equity=global_peak_equity  # Pass global peak for proper DD tracking across chunks
         )
         
         buy_signals = 0
@@ -171,6 +175,7 @@ def _process_backtest_chunk(args):
             'equity_curve': env.equity_curve if env.equity_curve else [env.capital],
             'buy_signals': buy_signals,
             'sell_signals': sell_signals,
+            'final_peak_equity': env.peak_equity,  # Pass peak equity for next chunk
             'success': True
         }
         
@@ -419,13 +424,15 @@ class AMLHFTSystem:
     
     async def run_backtest(
         self,
-        days: int = 7,
+        days: int = 180,
         save_results: bool = True,
         historical_data: Optional[pd.DataFrame] = None
     ) -> Dict[str, Any]:
         """
         Run vectorized backtest with current parameters
         M4 OPTIMIZED: Chunked processing with MPS memory management
+        
+        Default: 180 days (6 months) for comprehensive market coverage
         """
         import gc
         import torch
@@ -498,11 +505,18 @@ class AMLHFTSystem:
                 # Move model state to CPU for sharing between processes
                 model_state_cpu = {k: v.cpu() for k, v in self._ml_model.model.state_dict().items()}
                 
-                # Prepare chunks for parallel processing
-                chunk_args = []
+                # Process chunks SEQUENTIALLY to chain capital correctly
+                # (parallel chunk processing causes capital to not carry over properly)
+                all_trades = []
+                all_equity_curve = []
+                buy_signals = 0
+                sell_signals = 0
+                
                 chunk_start_idx = seq_len
                 chunk_num = 0
                 current_capital = self.objectives["starting_capital_backtest"]
+                global_peak_equity = current_capital  # Track global peak across all chunks
+                total_chunks = (total_rows - seq_len) // chunk_size + 1
                 
                 while chunk_start_idx < total_rows - 1:
                     chunk_end_idx = min(chunk_start_idx + chunk_size, total_rows - 1)
@@ -510,48 +524,55 @@ class AMLHFTSystem:
                     
                     chunk_df_slice = df.iloc[max(0, chunk_start_idx-seq_len):chunk_end_idx+1].copy()
                     
-                    chunk_args.append((
+                    # Process single chunk with current capital and global peak equity
+                    chunk_args = (
                         chunk_df_slice,
-                        model_state_cpu,  # Use CPU version
+                        model_state_cpu,
                         self.params,
                         {
                             'chunk_idx': chunk_num,
                             'seq_len': seq_len,
                             'initial_capital': current_capital,
+                            'global_peak_equity': global_peak_equity,  # Pass global peak for proper DD tracking
                             'chunk_start_idx': chunk_start_idx,
                             'chunk_end_idx': chunk_end_idx
                         }
-                    ))
+                    )
                     
-                    chunk_start_idx = chunk_end_idx
-                
-                # Process chunks in parallel
-                all_trades = []
-                all_equity_curve = []
-                buy_signals = 0
-                sell_signals = 0
-                
-                with Pool(processes=max_workers) as pool:
-                    results = pool.map(_process_backtest_chunk, chunk_args)
-                
-                # Aggregate results
-                for i, result in enumerate(sorted(results, key=lambda x: x['chunk_idx'])):
+                    result = _process_backtest_chunk(chunk_args)
+                    
+                    # Hard cap for equity curve values (must match BacktestEnvironment.MAX_CAPITAL_ABSOLUTE)
+                    MAX_CAPITAL = 1_000_000.0
+                    
                     if result['success']:
                         all_trades.extend(result['trades'])
-                        all_equity_curve.extend(result['equity_curve'])
+                        # Cap all equity curve values before extending
+                        capped_equity = [min(v, MAX_CAPITAL) for v in result['equity_curve']]
+                        all_equity_curve.extend(capped_equity)
                         buy_signals += result['buy_signals']
                         sell_signals += result['sell_signals']
                         
-                        # Update capital for next chunk
+                        # Chain capital and peak equity to next chunk
                         if result['equity_curve']:
-                            current_capital = result['equity_curve'][-1]
+                            current_capital = min(result['equity_curve'][-1], MAX_CAPITAL)
+                            # Safety: prevent capital from going to zero or negative
+                            if current_capital <= 0:
+                                current_capital = 1.0  # Minimum capital to continue
+                        
+                        # Update global peak equity from this chunk's final peak
+                        if 'final_peak_equity' in result:
+                            global_peak_equity = max(global_peak_equity, result['final_peak_equity'])
+                        else:
+                            # Fallback: use max equity from this chunk's curve
+                            global_peak_equity = max(global_peak_equity, max(capped_equity) if capped_equity else global_peak_equity)
                         
                         # Progress logging
-                        progress_pct = int(((i + 1) / len(results)) * 100)
-                        if (i + 1) % max(1, len(results) // 10) == 0 or i == len(results) - 1:
-                            logger.info(f"Backtest progress: {progress_pct}% (Chunk {i+1}/{len(results)})")
+                        progress_pct = int((chunk_num / total_chunks) * 100)
+                        logger.info(f"Backtest progress: {progress_pct}% (Chunk {chunk_num}/{total_chunks})")
                     else:
                         logger.warning(f"Chunk {result['chunk_idx']} failed: {result.get('error', 'unknown')}")
+                    
+                    chunk_start_idx = chunk_end_idx
                 
                 latency_sum = 0.0  # Not tracking latency in parallel mode
                 
@@ -567,6 +588,9 @@ class AMLHFTSystem:
                 chunk_start_idx = seq_len
                 chunk_num = 0
                 
+                # Hard cap for equity curve values
+                MAX_CAPITAL = 1_000_000.0
+                
                 while chunk_start_idx < total_rows - 1:
                     chunk_end_idx = min(chunk_start_idx + chunk_size, total_rows - 1)
                     chunk_num += 1
@@ -576,7 +600,16 @@ class AMLHFTSystem:
                     logger.info(f"Backtest progress: {progress_pct}% ({chunk_end_idx}/{total_rows}) [Chunk {chunk_num}]")
                     
                     # Create environment for this chunk
-                    chunk_capital = self.objectives["starting_capital_backtest"] if chunk_start_idx == seq_len else all_equity_curve[-1]
+                    initial_cap = self.objectives["starting_capital_backtest"]
+                    if chunk_start_idx == seq_len:
+                        chunk_capital = initial_cap
+                    else:
+                        chunk_capital = all_equity_curve[-1]
+                        # Hard cap to prevent overflow
+                        chunk_capital = max(1.0, min(chunk_capital, MAX_CAPITAL))
+                    
+                    max_dd_pct = self.params["trading"].get("max_portfolio_drawdown_pct", 5.0)
+                    
                     env = BacktestEnvironment(
                         df=df.iloc[max(0, chunk_start_idx-seq_len):chunk_end_idx+1].copy(),
                         initial_capital=chunk_capital,
@@ -584,7 +617,8 @@ class AMLHFTSystem:
                         slippage=slippage_pct,
                         take_profit_pct=self.params["trading"]["take_profit_pct"],
                         stop_loss_pct=self.params["trading"]["stop_loss_pct"],
-                        max_hold_bars=60  # 60-bar (1 hour) hold limit
+                        max_hold_bars=60,  # 60-bar (1 hour) hold limit
+                        max_drawdown_pct=max_dd_pct  # Portfolio-level drawdown limit
                     )
                     
                     # OPTIMIZED: Batch inference on entire chunk (10-50x faster)
@@ -674,9 +708,14 @@ class AMLHFTSystem:
             avg_latency_ms = latency_sum / max(total_rows - seq_len - 1, 1) if not use_multiprocessing else 0.0
             
             # Build metrics dict (simplified - using BacktestEnvironment's final state)
+            # Cap final_capital to prevent overflow
+            MAX_CAPITAL = 1_000_000.0
             final_capital = all_equity_curve[-1] if all_equity_curve else self.objectives["starting_capital_backtest"]
+            final_capital = min(final_capital, MAX_CAPITAL)
             initial_capital = self.objectives["starting_capital_backtest"]
             total_return_pct = ((final_capital - initial_capital) / initial_capital) * 100
+            # Cap at 100000% (1000x) for display
+            total_return_pct = min(total_return_pct, 100000.0)
             
             metrics = {
                 "total_trades": len(all_trades),
@@ -703,16 +742,30 @@ class AMLHFTSystem:
                 else:
                     metrics["sharpe_ratio"] = 0
                 
-                # Max drawdown
-                peak = initial_capital
-                max_dd = 0
-                for equity in all_equity_curve:
-                    if equity > peak:
-                        peak = equity
-                    dd = ((peak - equity) / peak) * 100
-                    if dd > max_dd:
-                        max_dd = dd
-                metrics["max_drawdown_pct"] = max_dd
+                # Max drawdown - use percentage returns to avoid absolute value issues
+                # Calculate as percentage drop from peak, using normalized equity
+                if all_equity_curve and len(all_equity_curve) > 1:
+                    # Normalize equity curve to start at 1.0 for stable drawdown calculation
+                    first_equity = all_equity_curve[0] if all_equity_curve[0] > 0 else 1.0
+                    normalized_equity = [e / first_equity for e in all_equity_curve if e > 0]
+                    
+                    if normalized_equity:
+                        peak = normalized_equity[0]
+                        max_dd = 0.0
+                        for equity in normalized_equity:
+                            if equity > peak:
+                                peak = equity
+                            if peak > 0:
+                                dd = ((peak - equity) / peak) * 100
+                                # Cap individual drawdown at 99% to avoid artificial 100%
+                                dd = min(dd, 99.0)
+                                if dd > max_dd:
+                                    max_dd = dd
+                        metrics["max_drawdown_pct"] = max_dd
+                    else:
+                        metrics["max_drawdown_pct"] = 0
+                else:
+                    metrics["max_drawdown_pct"] = 0
             else:
                 metrics["win_rate"] = 0
                 metrics["profit_factor"] = 0
@@ -790,6 +843,8 @@ class AMLHFTSystem:
         # Compounding extrapolation for more accurate monthly estimate
         if total_return > -1:  # Avoid math errors
             monthly_return = ((1 + total_return) ** (30 / max(backtest_days, 1)) - 1) * 100
+            # Cap at 10000% to prevent overflow display issues
+            monthly_return = min(monthly_return, 10000.0)
         else:
             monthly_return = -100  # Total loss case
         
@@ -828,7 +883,7 @@ class AMLHFTSystem:
     
     async def train_model(
         self,
-        days: int = 30,
+        days: int = 180,
         epochs: Optional[int] = None,
         append_live: bool = False
     ) -> Dict[str, Any]:
@@ -836,8 +891,8 @@ class AMLHFTSystem:
         Train ML model on historical data.
         
         Args:
-            days: Number of days of data (default 30 for better coverage)
-            epochs: Training epochs (None uses config default)
+            days: Number of days of data (default 180 for 6 months coverage)
+            epochs: Training epochs (None uses config default of 150)
             append_live: Append recent live cached data for freshness (Step 3)
         """
         self._ensure_setup()
@@ -902,12 +957,15 @@ class AMLHFTSystem:
             - Trending (ADX > 25): Follow momentum
             - Ranging (ADX < 25): RSI mean-reversion
             """
+            max_dd_pct = self.params["trading"].get("max_portfolio_drawdown_pct", 5.0)
+            
             env = BacktestEnvironment(
                 df=df_data,
                 initial_capital=self.objectives["starting_capital_backtest"],
                 take_profit_pct=params["take_profit_pct"],
                 stop_loss_pct=params["stop_loss_pct"],
-                max_hold_bars=30  # 30-min hold for faster exits
+                max_hold_bars=30,  # 30-min hold for faster exits
+                max_drawdown_pct=max_dd_pct  # Portfolio-level drawdown limit
             )
             
             # Strategy parameters

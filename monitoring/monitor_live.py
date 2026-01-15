@@ -281,6 +281,57 @@ def display_dashboard(data: dict, api: HyperliquidAPI, next_refresh: float):
             
             risk_metrics = system_state.get("risk_metrics", {})
             hold_stats = system_state.get("hold_time_stats", {})
+            action_stats = system_state.get("action_distribution", {})
+            
+            # ACTION BIAS MONITORING (NEW)
+            print(f"{Colors.BOLD}⚖️  Action Bias Monitor{Colors.RESET}")
+            print("-" * 40)
+            
+            if action_stats:
+                total_actions = sum(action_stats.values())
+                if total_actions > 0:
+                    hold_pct = action_stats.get("HOLD", 0) / total_actions * 100
+                    buy_pct = action_stats.get("BUY", 0) / total_actions * 100
+                    sell_pct = action_stats.get("SELL", 0) / total_actions * 100
+                    
+                    # Bias detection (>60% = warning, >75% = critical)
+                    max_pct = max(hold_pct, buy_pct, sell_pct)
+                    bias_action = "HOLD" if hold_pct == max_pct else ("BUY" if buy_pct == max_pct else "SELL")
+                    
+                    if max_pct > 75:
+                        bias_color = Colors.RED
+                        bias_alert = f"🚨 CRITICAL BIAS: {bias_action}"
+                    elif max_pct > 60:
+                        bias_color = Colors.YELLOW
+                        bias_alert = f"⚠️  BIAS WARNING: {bias_action}"
+                    else:
+                        bias_color = Colors.GREEN
+                        bias_alert = "✅ BALANCED"
+                    
+                    print(f"  HOLD:  {hold_pct:5.1f}%  {'█' * int(hold_pct/5)}")
+                    print(f"  BUY:   {buy_pct:5.1f}%  {'█' * int(buy_pct/5)}")
+                    print(f"  SELL:  {sell_pct:5.1f}%  {'█' * int(sell_pct/5)}")
+                    print(f"  Status: {bias_color}{bias_alert}{Colors.RESET}")
+                else:
+                    print(f"  {Colors.YELLOW}No action data yet{Colors.RESET}")
+            else:
+                # Try to calculate from recent fills
+                if fills and len(fills) > 0:
+                    buy_count = sum(1 for f in fills if getattr(f, 'side', '') == 'B')
+                    sell_count = sum(1 for f in fills if getattr(f, 'side', '') == 'A')
+                    total = buy_count + sell_count
+                    if total > 0:
+                        buy_pct = buy_count / total * 100
+                        sell_pct = sell_count / total * 100
+                        print(f"  BUY:   {buy_pct:5.1f}% ({buy_count} trades)")
+                        print(f"  SELL:  {sell_pct:5.1f}% ({sell_count} trades)")
+                        if sell_pct > 60:
+                            print(f"  {Colors.YELLOW}⚠️  SELL bias detected from fills{Colors.RESET}")
+                    else:
+                        print(f"  {Colors.YELLOW}No trades to analyze{Colors.RESET}")
+                else:
+                    print(f"  {Colors.YELLOW}Action data not available{Colors.RESET}")
+            print()
             
             print(f"{Colors.BOLD}⏱️  HFT Hold Time Stats{Colors.RESET}")
             print("-" * 40)

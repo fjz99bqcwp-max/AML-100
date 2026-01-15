@@ -106,7 +106,7 @@ class DataFetcher:
         
         # SPX/S&P500 synthetic data parameters
         self.SPX_ANNUAL_VOL = 0.15  # ~15% annualized volatility for S&P500
-        self.SPX_DRIFT = 0.10  # ~10% annual drift
+        self.SPX_DRIFT = 0.0  # Drift-neutral for balanced training (prevents directional bias)
         self.XYZ100_CORRELATION = 0.8  # Correlation with XYZ100
         
     def _ensure_directories(self) -> None:

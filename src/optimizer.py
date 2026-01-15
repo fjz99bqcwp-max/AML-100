@@ -72,7 +72,7 @@ class ParameterOptimizer:
         with open(self.objectives_path, "r") as f:
             self.objectives = json.load(f)
         
-        self.opt_config = self.params.get("optimization", {})
+        self.opt_config = self.objectives.get("optimization", {})
         self.param_bounds = self.opt_config.get("param_bounds", {})
     
     def _save_params(self) -> None:
