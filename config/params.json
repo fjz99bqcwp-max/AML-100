@@ -2,7 +2,7 @@
     "asset": "XYZ100",
     "trading": {
         "take_profit_pct": 3.0,
-        "stop_loss_pct": 0.4601865876668157,
+        "stop_loss_pct": 0.41416792890013415,
         "position_size_pct": 15.0,
         "leverage": 1,
         "signal_threshold": 5e-05,
