@@ -226,7 +226,14 @@ class HyperliquidAPI:
     """
     High-performance async wrapper for Hyperliquid API
     Supports REST and WebSocket connections for HFT
+    
+    Enhanced with:
+    - Status page health check (api.hyperliquid.xyz/info)
+    - Outage duration tracking
     """
+    
+    # HyperLiquid health check endpoints
+    HEALTH_CHECK_URL = "https://api.hyperliquid.xyz/info"
     
     def __init__(self, config_path: str = "config/api.json"):
         self.config = self._load_config(config_path)
@@ -238,6 +245,12 @@ class HyperliquidAPI:
         self._ws: Any = None  # WebSocket connection
         self._ws_connected = False
         self._ws_subscriptions: Dict[str, Callable] = {}
+        
+        # Health check state
+        self._last_health_check = 0.0
+        self._health_check_interval = 60.0  # Check every 60s
+        self._api_healthy = True
+        self._outage_start = None
         
         # Step 1: API Response Cache - aggressive TTLs for <15 calls/min target
         self._response_cache: Dict[str, CachedResponse] = {}
@@ -350,6 +363,62 @@ class HyperliquidAPI:
         self.warn_if_testnet()
         
         logger.info(f"Initialized Hyperliquid API for wallet: {wallet_address[:10]}...")
+    
+    async def check_api_health(self) -> bool:
+        """
+        Check if HyperLiquid API is healthy by making a simple request.
+        
+        Returns:
+            True if API is responding, False otherwise
+        """
+        now = time.time()
+        
+        # Rate limit health checks
+        if now - self._last_health_check < self._health_check_interval:
+            return self._api_healthy
+        
+        self._last_health_check = now
+        
+        try:
+            await self._ensure_session()
+            
+            # Simple meta request to check API health
+            payload = {"type": "meta"}
+            
+            async with self._session.post(
+                self.HEALTH_CHECK_URL,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=5)
+            ) as response:
+                if response.status == 200:
+                    # API is healthy
+                    if not self._api_healthy:
+                        outage_duration = time.time() - self._outage_start if self._outage_start else 0
+                        logger.info(f"API RECOVERED after {outage_duration:.0f}s outage")
+                        self._outage_start = None
+                    self._api_healthy = True
+                    return True
+                else:
+                    self._mark_api_unhealthy()
+                    return False
+                    
+        except Exception as e:
+            self._mark_api_unhealthy()
+            logger.debug(f"Health check failed: {e}")
+            return False
+    
+    def _mark_api_unhealthy(self) -> None:
+        """Mark API as unhealthy and track outage duration"""
+        if self._api_healthy:
+            self._api_healthy = False
+            self._outage_start = time.time()
+            logger.warning("API UNHEALTHY - starting outage tracking")
+    
+    def get_outage_duration(self) -> float:
+        """Get current outage duration in seconds (0 if healthy)"""
+        if self._api_healthy or self._outage_start is None:
+            return 0.0
+        return time.time() - self._outage_start
     
     async def close(self) -> None:
         """Clean up connections gracefully"""
@@ -736,20 +805,15 @@ class HyperliquidAPI:
     async def get_orderbook(self, symbol: str = "BTC") -> Optional[OrderBook]:
         """Get current orderbook snapshot with caching"""
         try:
-            # Extract coin name from symbol (e.g., "xyz:XYZ100" -> "XYZ100")
-            coin = symbol.split(":")[-1] if ":" in symbol else symbol
+            # For HIP-3 (xyz:XYZ100), use full coin format per API docs
+            # For standard perps (BTC, ETH), use coin name directly
+            coin = symbol  # Keep full format for HIP-3
             
             cache_key = f"orderbook:{symbol}"
             payload = {
                 "type": "l2Book",
                 "coin": coin
             }
-            # Add dex parameter for XYZ perps (detected from prefix or config)
-            dex = self.config.get("hyperliquid", {}).get("dex")
-            if symbol.startswith("xyz:") or dex == "xyz":
-                payload["dex"] = "xyz"
-            elif dex:
-                payload["dex"] = dex
             
             data = await self._cached_request(
                 cache_key,
@@ -790,8 +854,8 @@ class HyperliquidAPI:
         limit: int = 500
     ) -> List[Dict[str, Any]]:
         """Get historical klines/candlesticks"""
-        # Extract coin name from symbol (e.g., "xyz:XYZ100" -> "XYZ100")
-        coin = symbol.split(":")[-1] if ":" in symbol else symbol
+        # For HIP-3 (xyz:XYZ100), use full coin format per API docs
+        coin = symbol  # Keep full format for HIP-3
         
         payload = {
             "type": "candleSnapshot",
@@ -802,12 +866,6 @@ class HyperliquidAPI:
                 "endTime": end_time or int(time.time() * 1000)
             }
         }
-        # Add dex parameter for XYZ perps
-        dex = self.config.get("hyperliquid", {}).get("dex")
-        if symbol.startswith("xyz:") or dex == "xyz":
-            payload["dex"] = "xyz"
-        elif dex:
-            payload["dex"] = dex
         
         data = await self._post_request(
             self.config["hyperliquid"]["info_url"],
@@ -822,19 +880,13 @@ class HyperliquidAPI:
         limit: int = 100
     ) -> List[Dict[str, Any]]:
         """Get recent public trades"""
-        # Extract coin name from symbol (e.g., "xyz:XYZ100" -> "XYZ100")
-        coin = symbol.split(":")[-1] if ":" in symbol else symbol
+        # For HIP-3 (xyz:XYZ100), use full coin format per API docs
+        coin = symbol  # Keep full format for HIP-3
         
         payload = {
             "type": "recentTrades",
             "coin": coin
         }
-        # Add dex parameter for XYZ perps
-        dex = self.config.get("hyperliquid", {}).get("dex")
-        if symbol.startswith("xyz:") or dex == "xyz":
-            payload["dex"] = "xyz"
-        elif dex:
-            payload["dex"] = dex
         
         result = await self._post_request(
             self.config["hyperliquid"]["info_url"],
@@ -844,20 +896,14 @@ class HyperliquidAPI:
     
     async def get_funding_rate(self, symbol: str = "BTC") -> Dict[str, Any]:
         """Get current funding rate"""
-        # Extract coin name from symbol (e.g., "xyz:XYZ100" -> "XYZ100")
-        coin = symbol.split(":")[-1] if ":" in symbol else symbol
+        # For HIP-3 (xyz:XYZ100), use full coin format per API docs
+        coin = symbol  # Keep full format for HIP-3
         
         payload = {
             "type": "fundingHistory",
             "coin": coin,
             "startTime": int((time.time() - 3600) * 1000)
         }
-        # Add dex parameter for XYZ perps
-        dex = self.config.get("hyperliquid", {}).get("dex")
-        if symbol.startswith("xyz:") or dex == "xyz":
-            payload["dex"] = "xyz"
-        elif dex:
-            payload["dex"] = dex
         
         return await self._post_request(
             self.config["hyperliquid"]["info_url"],
@@ -888,6 +934,11 @@ class HyperliquidAPI:
         """Get current positions"""
         state = await self.get_user_state()
         positions = []
+        
+        # Handle error responses (string instead of dict)
+        if not isinstance(state, dict):
+            logger.warning(f"get_positions: Invalid state response: {state}")
+            return []
         
         for pos in state.get("assetPositions", []):
             position_data = pos.get("position", {})

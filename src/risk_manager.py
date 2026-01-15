@@ -713,12 +713,19 @@ class RiskManager:
         max_size = base_size_pct * 1.75 if self.risk_level == "normal" else base_size_pct * 1.2
         size_pct = min(size_pct, max_size)
         
-        # Convert to actual size
-        position_value = self.current_capital * (size_pct / 100)
+        # Apply leverage to effective buying power
+        # For perps, we can trade with margin - leverage increases our position capacity
+        leverage = self.params["trading"].get("leverage", 10)
+        xyz100_leverage_cap = self.risk_config.get("xyz100_leverage_cap", 20)
+        leverage = min(leverage, xyz100_leverage_cap)
+        
+        # Convert to actual size (with leverage applied to buying power)
+        effective_capital = self.current_capital * leverage
+        position_value = effective_capital * (size_pct / 100)
         position_size = position_value / entry_price
         
         # Enforce exchange minimum order size (asset-specific)
-        # XYZ100 is an equity index perp trading in whole units (~$60/unit)
+        # XYZ100 is an equity index perp trading in whole units (~$25,000/unit)
         # BTC trades in fractions (0.001 minimum)
         asset = self.params.get("asset", "XYZ100")
         if "XYZ" in asset.upper():
@@ -733,13 +740,13 @@ class RiskManager:
             asset_name = "BTC"
         
         if position_size < min_order_size:
-            # Scale up to minimum if we have enough capital (max 15% per trade)
-            min_position_value = min_order_size * entry_price
-            if min_position_value <= self.current_capital * 0.15:
+            # Scale up to minimum if we have enough margin (leverage-adjusted)
+            min_margin_required = (min_order_size * entry_price) / leverage
+            if min_margin_required <= self.current_capital * 0.95:  # Allow up to 95% of capital as margin for min trade
                 position_size = min_order_size
-                logger.info(f"Position scaled to minimum: {position_size:.{decimals}f} {asset_name} (${min_position_value:.2f})")
+                logger.info(f"Position scaled to minimum: {position_size:.{decimals}f} {asset_name} (margin=${min_margin_required:.2f}, {leverage}x leverage)")
             else:
-                logger.warning(f"Insufficient capital for min trade: need ${min_position_value:.2f}, have ${self.current_capital:.2f}")
+                logger.warning(f"Insufficient margin for min trade: need ${min_margin_required:.2f} margin ({leverage}x), have ${self.current_capital:.2f}")
                 return 0.0
         
         # Round to appropriate decimals for asset type

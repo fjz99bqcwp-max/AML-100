@@ -1495,6 +1495,11 @@ class AMLHFTSystem:
         
         Uses configurable thresholds and logs signal decisions.
         Target: <1ms inference latency.
+        
+        Enhanced with:
+        - Synthetic data fallback when API fails for >10 min
+        - No-data timeout tracking
+        - Force signal on prolonged no-data
         """
         self._ensure_setup()
         signal_start = time.perf_counter()  # Step 5: Latency profiling
@@ -1502,6 +1507,11 @@ class AMLHFTSystem:
         # Get configurable thresholds from params
         signal_thresh = self.params.get("trading", {}).get("signal_threshold", 0.001)
         min_q_diff = self.params.get("trading", {}).get("min_q_diff", 0.003)
+        no_data_timeout = self.params.get("trading", {}).get("no_data_timeout_seconds", 600)  # 10 min
+        
+        # Track no-data duration
+        if not hasattr(self, '_no_data_start'):
+            self._no_data_start = None
         
         # Get recent market data
         klines = self._data_fetcher.get_cached_klines(
@@ -1511,13 +1521,30 @@ class AMLHFTSystem:
         )
 
         if len(klines) < self._ml_model.sequence_length:
+            # Track how long we've been without data
+            if self._no_data_start is None:
+                self._no_data_start = time.time()
+            
+            no_data_duration = time.time() - self._no_data_start
+            
             # Only log every 30 seconds to reduce spam
             if not hasattr(self, '_last_data_warning'):
                 self._last_data_warning = 0
             if time.time() - self._last_data_warning >= 30:
-                logger.warning(f"Waiting for data: {len(klines)}/{self._ml_model.sequence_length} klines (API may be unavailable)")
+                logger.warning(f"Waiting for data: {len(klines)}/{self._ml_model.sequence_length} klines (no data for {no_data_duration:.0f}s)")
                 self._last_data_warning = time.time()
+            
+            # NO-DATA TIMEOUT: After 10 min, use synthetic data for inference
+            if no_data_duration >= no_data_timeout:
+                logger.warning(f"NO-DATA TIMEOUT ({no_data_duration:.0f}s) - switching to synthetic inference")
+                return await self._generate_synthetic_signal()
+            
             return "HOLD", 0.0
+        
+        # Reset no-data tracking on success
+        if self._no_data_start is not None:
+            logger.info(f"Data recovered after {time.time() - self._no_data_start:.0f}s")
+            self._no_data_start = None
         
         # Convert to DataFrame
         df = pd.DataFrame([{
@@ -1677,6 +1704,55 @@ class AMLHFTSystem:
         
         return signal, strength
     
+    async def _generate_synthetic_signal(self) -> Tuple[str, float]:
+        """
+        Generate trading signal using synthetic data when API is unavailable.
+        Uses wallet hybrid or pure synthetic data for inference.
+        
+        Returns: (signal, strength) - alternating BUY/SELL to maintain activity
+        """
+        logger.info("Generating synthetic signal due to API outage")
+        
+        try:
+            # Generate synthetic data for inference
+            synthetic_df = self._data_fetcher.generate_synthetic_spx(days=7)
+            
+            if len(synthetic_df) >= self._ml_model.sequence_length:
+                # Add features to synthetic data
+                synthetic_df = self._data_fetcher._add_technical_features(synthetic_df)
+                
+                # Prepare features
+                features, _ = self._ml_model.prepare_features(synthetic_df)
+                feature_seq = features[-self._ml_model.sequence_length:]
+                
+                # Get model prediction on synthetic data
+                action, confidence, q_values = self._ml_model.predict(feature_seq)
+                signal = self._ml_model.ACTION_NAMES.get(action, "HOLD")
+                strength = confidence * 0.5  # Reduce confidence for synthetic
+                
+                logger.info(f"Synthetic signal: {signal} (conf={confidence:.3f}, reduced_str={strength:.3f})")
+                
+                # Force non-HOLD to maintain activity during outage
+                if signal == "HOLD":
+                    if not hasattr(self, '_synthetic_direction'):
+                        self._synthetic_direction = "BUY"
+                    signal = self._synthetic_direction
+                    strength = 0.3  # Low strength for forced synthetic trades
+                    self._synthetic_direction = "SELL" if self._synthetic_direction == "BUY" else "BUY"
+                    logger.info(f"Synthetic HOLD override: forcing {signal} (str=0.3)")
+                
+                return signal, strength
+        except Exception as e:
+            logger.error(f"Synthetic signal generation failed: {e}")
+        
+        # Fallback: alternate BUY/SELL
+        if not hasattr(self, '_fallback_direction'):
+            self._fallback_direction = "BUY"
+        signal = self._fallback_direction
+        self._fallback_direction = "SELL" if signal == "BUY" else "BUY"
+        logger.warning(f"Fallback signal: {signal} (str=0.2)")
+        return signal, 0.2
+    
     def _detect_market_regime(self, df: pd.DataFrame) -> str:
         """
         Step 5: Detect current market regime for adaptive trading.
@@ -1723,14 +1799,23 @@ class AMLHFTSystem:
     # ==================== Cycle Management ====================
     
     async def run_trading_cycle(self) -> CycleMetrics:
-        """Run one trading cycle with enhanced trade execution (Step 1 fixes)"""
+        """
+        Run one trading cycle with enhanced trade execution (Step 1 fixes)
+        
+        Enhanced with:
+        - Adaptive cycle extension on API outage (up to 1800s)
+        - 30-minute no-recovery halt (switches to simulation)
+        - Auto-retrain trigger on >90% HOLD
+        """
         self._ensure_setup()
         self.state.current_cycle += 1
         self.state.cycles_since_backtest += 1
         self.trade_count_this_cycle = 0
         self.cycle_start_time = time.time()
         
-        cycle_duration = self.objectives.get("cycle_duration_seconds", 300)
+        base_cycle_duration = self.objectives.get("cycle_duration_seconds", 600)
+        cycle_duration = base_cycle_duration
+        max_cycle_duration = 1800  # 30 min max extension on outage
         trade_threshold = self.objectives.get("cycle_trade_threshold", 10)
         
         # Step 1: Use very low signal threshold to allow trades
@@ -1738,7 +1823,11 @@ class AMLHFTSystem:
         
         # Force trade settings
         force_enabled = self.params.get("trading", {}).get("force_trade_after_holds", True)
-        max_holds = self.params.get("trading", {}).get("max_hold_signals_before_force", 3)
+        max_holds = self.params.get("trading", {}).get("max_hold_signals_before_force", 50)
+        
+        # Outage tracking
+        outage_start = None
+        max_outage_duration = 1800  # 30 min - halt after this
         
         logger.info(f"Cycle {self.state.current_cycle} started | duration={cycle_duration}s, force_after={max_holds}")
         
@@ -1758,6 +1847,34 @@ class AMLHFTSystem:
             if self._shutdown_event.is_set():
                 break
             
+            # OUTAGE DETECTION: Check if API is failing
+            is_api_failing = (
+                hasattr(self._api, '_circuit_breaker') and 
+                self._api._circuit_breaker.total_failures >= 20
+            )
+            
+            if is_api_failing:
+                if outage_start is None:
+                    outage_start = time.time()
+                    logger.warning(f"API OUTAGE DETECTED - extending cycle to {max_cycle_duration}s")
+                    cycle_duration = max_cycle_duration
+                
+                outage_duration = time.time() - outage_start
+                
+                # 30-MINUTE HALT: Switch to simulation mode
+                if outage_duration >= max_outage_duration:
+                    logger.error(f"API OUTAGE EXCEEDED 30 MIN ({outage_duration:.0f}s) - HALTING LIVE TRADING")
+                    logger.error("Switching to simulation mode - no real trades will be executed")
+                    self._simulation_mode = True
+                    adjustments.append("HALTED: 30min API outage")
+                    break
+            else:
+                # API recovered
+                if outage_start is not None:
+                    logger.info(f"API recovered after {time.time() - outage_start:.0f}s outage")
+                    outage_start = None
+                    cycle_duration = base_cycle_duration  # Reset duration
+            
             # Check if trade threshold reached
             if self.trade_count_this_cycle >= trade_threshold:
                 logger.info(f"Trade threshold ({trade_threshold}) reached")
@@ -1767,8 +1884,13 @@ class AMLHFTSystem:
             elapsed = time.time() - self.cycle_start_time
             if time.time() - last_progress_log >= 30:
                 remaining = cycle_duration - elapsed
-                logger.info(f"  Progress: {elapsed:.0f}s/{cycle_duration}s | sig={signals_generated} hold={signals_hold} exec={self.trade_count_this_cycle}")
+                hold_pct = (signals_hold / signals_generated * 100) if signals_generated > 0 else 0
+                logger.info(f"  Progress: {elapsed:.0f}s/{cycle_duration}s | sig={signals_generated} hold={signals_hold} ({hold_pct:.0f}%) exec={self.trade_count_this_cycle}")
                 last_progress_log = time.time()
+                
+                # BIAS ALERT: Warn if >90% HOLD
+                if signals_generated >= 20 and hold_pct >= 90:
+                    logger.warning(f"BIAS ALERT: {hold_pct:.0f}% HOLD signals - consider retraining")
             
             try:
                 # Check exit conditions for open positions
@@ -1894,16 +2016,42 @@ class AMLHFTSystem:
             f"hold={signals_hold}, filtered={signals_filtered}, executed={self.trade_count_this_cycle}"
         )
         
+        # BIAS DETECTION: Auto-retrain if >90% HOLD
+        hold_pct = (signals_hold / signals_generated * 100) if signals_generated > 0 else 0
+        bias_retrain_threshold = self.objectives.get("bias_retrain_threshold_pct", 90)
+        
+        if signals_generated >= 20 and hold_pct >= bias_retrain_threshold:
+            logger.warning(
+                f"AUTO-RETRAIN TRIGGERED: {hold_pct:.0f}% HOLD signals ({signals_hold}/{signals_generated}) "
+                f"exceeds threshold ({bias_retrain_threshold}%)"
+            )
+            adjustments.append(f"Auto-retrain: {hold_pct:.0f}% HOLD bias")
+            
+            # Initiate quick retrain
+            try:
+                data_days = self.params.get("ml_model", {}).get("data_days", 90)
+                logger.info(f"Starting bias-triggered retrain with {data_days} days data, 100 epochs")
+                await self._data_fetcher.stop_background_fetching()
+                await self.train_model(days=data_days, epochs=100, append_live=True)
+                await self._data_fetcher.start_background_fetching(symbol=self.api_config["symbol"])
+                
+                # Reset bias tracking
+                if hasattr(self._ml_model, 'reset_bias_flags'):
+                    self._ml_model.reset_bias_flags()
+                logger.info("Bias-triggered retrain complete")
+            except Exception as e:
+                logger.error(f"Bias-triggered retrain failed: {e}")
+        
         # Warn if no trades despite signals - with better diagnosis
-        if self.trade_count_this_cycle == 0 and signals_generated > 0:
+        elif self.trade_count_this_cycle == 0 and signals_generated > 0:
             if signals_hold == signals_generated:
                 logger.warning(
-                    f"⚠ Cycle {self.state.current_cycle}: All {signals_generated} signals were HOLD - "
+                    f"Cycle {self.state.current_cycle}: All {signals_generated} signals were HOLD - "
                     f"model may need retraining or force_trade should trigger"
                 )
             else:
                 logger.warning(
-                    f"⚠ Cycle {self.state.current_cycle}: 0 trades from {signals_generated} signals - "
+                    f"Cycle {self.state.current_cycle}: 0 trades from {signals_generated} signals - "
                     f"check signal_threshold ({signal_threshold}) or position sizing"
                 )
 

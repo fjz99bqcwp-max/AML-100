@@ -102,7 +102,7 @@ class CETFormatter(logging.Formatter):
         module = record.name
         if module.startswith('src.'):
             module = module[4:]  # Remove 'src.' prefix
-        module = module[:10].ljust(10)  # Fixed width, shorter
+        module = module[:15].ljust(15)  # Fixed width for hyperliquid_api (15 chars)
         
         # Format message - strip icons for cleaner output
         msg = record.getMessage()

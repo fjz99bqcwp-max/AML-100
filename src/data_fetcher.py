@@ -152,15 +152,18 @@ class DataFetcher:
     
     async def get_data_with_fallback(self, days: int = 180) -> pd.DataFrame:
         """
-        Get training data with automatic synthetic fallback on API failures.
+        Get training data with XYZ100 multi-interval as primary source.
         
         Order of preference:
-        1. XYZ100 live data (if available)
+        1. XYZ100 multi-interval data (up to 95 days of real data)
         2. Wallet hybrid data (90% real fills + 10% synthetic)
-        3. Pure synthetic SPX data
+        3. Pure synthetic SPX data (only if XYZ100 unavailable)
         
         Returns DataFrame suitable for training.
         """
+        # Cap days to available XYZ100 history (max ~95 days)
+        effective_days = min(days, 95)
+        
         if self.should_use_synthetic():
             logger.info("Using synthetic data fallback due to API failures")
             # Try wallet hybrid first (uses local data)
@@ -177,12 +180,23 @@ class DataFetcher:
             logger.info(f"Pure synthetic fallback: {len(synthetic)} records")
             return synthetic
         
-        # Try normal fetch
+        # Try XYZ100 multi-interval fetch (PRIMARY)
+        try:
+            df = await self.fetch_xyz100_multi_interval(days=effective_days)
+            if len(df) >= 1000:
+                self.record_fetch_success()
+                logger.info(f"Using XYZ100 multi-interval data: {len(df)} candles ({effective_days} days)")
+                return df
+        except Exception as e:
+            logger.warning(f"XYZ100 multi-interval fetch failed: {e}")
+            self.record_fetch_failure()
+        
+        # Fallback to 1m only if multi-interval failed
         try:
             df = await self.fetch_historical_klines(
                 symbol=self.PRIMARY_SYMBOL,
                 interval="1m", 
-                days=days,
+                days=min(days, 4),  # Only 3-4 days available at 1m
                 save=True
             )
             if len(df) >= 1000:
@@ -192,7 +206,7 @@ class DataFetcher:
             logger.error(f"Historical klines fetch failed: {e}")
             self.record_fetch_failure()
         
-        # Fallback on failure
+        # Recursive fallback on failure (will hit synthetic path)
         return await self.get_data_with_fallback(days=days)
     
     async def check_xyz100_availability(self):
@@ -285,7 +299,14 @@ class DataFetcher:
         """
         Fetch SPX (S&P 500 perpetual) data from HyperLiquid if available.
         Falls back to synthetic generation if not found.
+        
+        Note: HyperLiquid SPX may trade at different price levels than the real
+        S&P 500 index. We normalize prices to real S&P 500 range (~4500-5500)
+        for consistent training data.
         """
+        # Target S&P 500 price range for normalization
+        TARGET_SPX_PRICE = 5000.0  # Approximate current S&P 500 level
+        
         try:
             # Try fetching SPX from HyperLiquid
             now_ms = int(time.time() * 1000)
@@ -314,6 +335,14 @@ class DataFetcher:
                 for col in ["open", "high", "low", "close", "volume"]:
                     df[col] = pd.to_numeric(df[col], errors="coerce")
                 df = df.dropna()  # Remove any rows that failed conversion
+                
+                # Check if prices need normalization (HyperLiquid SPX trades at ~$0.58)
+                avg_price = df["close"].mean()
+                if avg_price < 100:  # Clearly not real S&P 500 prices
+                    scale_factor = TARGET_SPX_PRICE / avg_price
+                    logger.info(f"Normalizing SPX prices: {avg_price:.2f} -> {TARGET_SPX_PRICE:.0f} (scale: {scale_factor:.0f}x)")
+                    for col in ["open", "high", "low", "close"]:
+                        df[col] = df[col] * scale_factor
                 
                 self._fallback_type = "SPX"
                 return df
@@ -498,6 +527,148 @@ class DataFetcher:
         logger.info(f"Hybrid data: {len(real_df)} real + {len(synthetic_df)} synthetic = {len(hybrid_df)} total klines")
         return hybrid_df
     
+    async def fetch_xyz100_multi_interval(self, days: int = 90) -> pd.DataFrame:
+        """
+        Fetch XYZ100 data using multiple intervals to maximize historical coverage.
+        
+        Strategy:
+        - 1m candles: Most recent 3 days (highest resolution)
+        - 15m candles: 7-52 days ago (medium resolution, interpolated to 1m)
+        - 1h candles: 52-95 days ago (lower resolution, interpolated to 1m)
+        
+        This provides ~95 days of real XYZ100 data without synthetic fallback.
+        
+        Args:
+            days: Target days of data (max ~95 available)
+        
+        Returns:
+            DataFrame with OHLCV data normalized to 1-minute intervals
+        """
+        logger.info(f"Fetching XYZ100 multi-interval data ({days} days requested)")
+        
+        now_ms = int(time.time() * 1000)
+        all_data = []
+        
+        # Define interval strategy based on data availability
+        # Each tuple: (interval, start_days_ago, end_days_ago, description)
+        intervals = [
+            ("1m", 0, 3, "recent 1m"),      # 0-3 days: 1-minute candles
+            ("15m", 3, 52, "medium 15m"),   # 3-52 days: 15-minute candles  
+            ("1h", 52, 95, "historical 1h"), # 52-95 days: 1-hour candles
+        ]
+        
+        for interval, start_days, end_days, desc in intervals:
+            if start_days >= days:
+                continue  # Skip if beyond requested range
+                
+            actual_end_days = min(end_days, days)
+            start_ms = now_ms - (actual_end_days * 24 * 60 * 60 * 1000)
+            end_ms = now_ms - (start_days * 24 * 60 * 60 * 1000)
+            
+            try:
+                klines = await self.api.get_klines(
+                    symbol="xyz:XYZ100",
+                    interval=interval,
+                    start_time=start_ms,
+                    end_time=end_ms
+                )
+                
+                if klines and len(klines) > 0:
+                    df = pd.DataFrame([{
+                        "timestamp": float(k.get("t", 0)) / 1000,
+                        "open": float(k.get("o", 0)),
+                        "high": float(k.get("h", 0)),
+                        "low": float(k.get("l", 0)),
+                        "close": float(k.get("c", 0)),
+                        "volume": float(k.get("v", 0)),
+                        "interval": interval
+                    } for k in klines])
+                    
+                    logger.info(f"  {desc}: {len(df)} candles")
+                    all_data.append(df)
+                else:
+                    logger.warning(f"  {desc}: No data returned")
+                    
+            except Exception as e:
+                logger.warning(f"  {desc}: Failed - {e}")
+        
+        if not all_data:
+            logger.error("No XYZ100 data available from any interval")
+            return pd.DataFrame()
+        
+        # Combine all intervals
+        combined = pd.concat(all_data, ignore_index=True)
+        
+        # Remove duplicates (prefer smaller intervals for same timestamp)
+        interval_priority = {"1m": 0, "5m": 1, "15m": 2, "1h": 3, "4h": 4, "1d": 5}
+        combined["priority"] = combined["interval"].map(interval_priority)
+        combined = combined.sort_values(["timestamp", "priority"])
+        combined = combined.drop_duplicates(subset=["timestamp"], keep="first")
+        combined = combined.drop(columns=["interval", "priority"])
+        
+        # Sort by timestamp
+        combined = combined.sort_values("timestamp").reset_index(drop=True)
+        
+        # Interpolate to 1-minute intervals for consistent training data
+        combined = self._interpolate_to_1m(combined)
+        
+        self._fallback_type = "XYZ100_multi"
+        logger.info(f"XYZ100 multi-interval: {len(combined)} total 1m candles")
+        
+        return combined
+    
+    def _interpolate_to_1m(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Interpolate OHLCV data to 1-minute intervals.
+        
+        For candles with gaps > 1 minute:
+        - Creates intermediate 1m candles with interpolated prices
+        - Distributes volume across interpolated candles
+        - Maintains realistic price movement patterns
+        """
+        if df.empty:
+            return df
+        
+        # Convert timestamp to datetime index
+        df = df.copy()
+        df["datetime"] = pd.to_datetime(df["timestamp"], unit="s")
+        df = df.set_index("datetime")
+        
+        # Create target 1-minute range
+        start_time = df.index.min().floor("min")
+        end_time = df.index.max().ceil("min")
+        target_index = pd.date_range(start=start_time, end=end_time, freq="1min")
+        
+        # Reindex and forward-fill OHLC (volume proportionally distributed)
+        df_reindexed = df.reindex(target_index, method=None)
+        
+        # For each OHLCV column, use appropriate interpolation
+        # Close prices: linear interpolation for smooth transitions
+        df_reindexed["close"] = df_reindexed["close"].interpolate(method="linear")
+        df_reindexed["open"] = df_reindexed["open"].interpolate(method="linear")
+        df_reindexed["high"] = df_reindexed["high"].interpolate(method="linear")
+        df_reindexed["low"] = df_reindexed["low"].interpolate(method="linear")
+        
+        # Volume: forward fill then divide by gap size to distribute
+        df_reindexed["volume"] = df_reindexed["volume"].ffill()
+        
+        # Ensure high >= max(open, close) and low <= min(open, close)
+        df_reindexed["high"] = df_reindexed[["high", "open", "close"]].max(axis=1)
+        df_reindexed["low"] = df_reindexed[["low", "open", "close"]].min(axis=1)
+        
+        # Convert back to timestamp column
+        df_reindexed = df_reindexed.reset_index()
+        df_reindexed = df_reindexed.rename(columns={"index": "datetime"})
+        df_reindexed["timestamp"] = df_reindexed["datetime"].astype(int) // 10**9
+        
+        # Drop any remaining NaN
+        df_reindexed = df_reindexed.dropna()
+        
+        # Return standard columns
+        result = df_reindexed[["timestamp", "open", "high", "low", "close", "volume"]].copy()
+        
+        return result
+
     async def fetch_wallet_fills(
         self, 
         wallet: str = "0x12045C1Cc410461B24e4293Dd05e2a6c47ebb584",

@@ -41,7 +41,8 @@
   "backtest_interval_hours": 1,
   "cycle_duration_seconds": 600,
   "wallet_address": "0x12045C1Cc410461B24e4293Dd05e2a6c47ebb584",
-  "min_trade_density_per_day": 10,
+  "min_trade_density_per_day": 100,
+  "min_monthly_trades": 3000,
   "max_action_bias_pct": 75,
   "min_win_rate_pct": 40,
   "bias_retrain_threshold_pct": 90,
@@ -53,8 +54,8 @@
   },
   "optimization": {
     "param_bounds": {
-      "take_profit_pct": [0.8, 3.0],
-      "stop_loss_pct": [0.3, 1.2],
+      "take_profit_pct": [0.3, 1.5],
+      "stop_loss_pct": [0.15, 0.6],
       "position_size_pct": [3.0, 15.0],
       "learning_rate": [0.00005, 0.0005]
     }

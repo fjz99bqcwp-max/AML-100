@@ -1,10 +1,12 @@
 {
     "asset": "XYZ100",
     "trading": {
-        "take_profit_pct": 3.0,
-        "stop_loss_pct": 0.40,
-        "position_size_pct": 15.0,
-        "leverage": 1,
+        "take_profit_pct": 0.31744905019483727,
+        "stop_loss_pct": 0.3307491573705155,
+        "position_size_pct": 14.845225326337825,
+        "leverage": 10,
+        "max_leverage": 10,
+        "slippage_tolerance_pct": 0.05,
         "signal_threshold": 2e-05,
         "min_q_diff": 0.0002,
         "max_portfolio_drawdown_pct": 4.5,
@@ -12,12 +14,14 @@
         "min_trade_interval_seconds": 30,
         "max_hold_signals_before_force": 50,
         "force_trade_after_holds": true,
-        "force_trade_strength": 0.8
+        "force_trade_strength": 0.8,
+        "no_data_timeout_seconds": 600,
+        "max_outage_seconds": 1800
     },
     "ml_model": {
         "lstm_hidden_size": 128,
         "lstm_num_layers": 2,
-        "learning_rate": 5e-05,
+        "learning_rate": 0.00028842860481014383,
         "epochs": 200,
         "epsilon_decay": 0.985,
         "epsilon_start": 1.0,
@@ -27,8 +31,8 @@
         "num_workers": 8,
         "enable_torch_compile": true,
         "data_days": 180,
-        "action_balance_penalty": 0.30,
-        "bias_threshold": 0.60,
+        "action_balance_penalty": 0.3,
+        "bias_threshold": 0.6,
         "lr_scheduler_factor": 0.5,
         "lr_scheduler_patience": 40,
         "lr_min": 5e-07,
@@ -55,6 +59,6 @@
         "max_consecutive_holds": 50,
         "win_multiplier": 1.5,
         "trend_bonus": 0.05,
-        "diversity_penalty": 0.30
+        "diversity_penalty": 0.3
     }
 }

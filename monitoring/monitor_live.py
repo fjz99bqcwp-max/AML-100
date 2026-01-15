@@ -245,7 +245,7 @@ def display_dashboard(data: dict, api: HyperliquidAPI, next_refresh: float):
     print()
     
     # Recent Trades (Real Trading Only - last 24h)
-    print(f"{Colors.BOLD}💹 Recent Trades (Live){Colors.RESET}")
+    print(f"{Colors.BOLD}Recent Trades (Live){Colors.RESET}")
     print("-" * 40)
     
     fills = data["fills"]
@@ -283,8 +283,30 @@ def display_dashboard(data: dict, api: HyperliquidAPI, next_refresh: float):
             hold_stats = system_state.get("hold_time_stats", {})
             action_stats = system_state.get("action_distribution", {})
             
-            # ACTION BIAS MONITORING (NEW)
-            print(f"{Colors.BOLD}⚖️  Action Bias Monitor{Colors.RESET}")
+            # OUTAGE ALERT (NEW)
+            print(f"{Colors.BOLD}API Health Monitor{Colors.RESET}")
+            print("-" * 40)
+            
+            # Check for outage indicators from signal_counts
+            signal_counts = system_state.get("signal_counts", {})
+            total_signals = sum(signal_counts.values()) if signal_counts else 0
+            hold_signals = signal_counts.get("HOLD", 0)
+            
+            if total_signals > 0:
+                hold_ratio = hold_signals / total_signals
+                if hold_ratio >= 0.95:
+                    print(f"  {Colors.RED}API OUTAGE LIKELY: {hold_ratio:.0%} HOLD signals{Colors.RESET}")
+                    print(f"  {Colors.RED}Check HyperLiquid status page{Colors.RESET}")
+                elif hold_ratio >= 0.80:
+                    print(f"  {Colors.YELLOW}API DEGRADED: {hold_ratio:.0%} HOLD signals{Colors.RESET}")
+                else:
+                    print(f"  {Colors.GREEN}API HEALTHY: Normal signal distribution{Colors.RESET}")
+            else:
+                print(f"  {Colors.YELLOW}No signal data available{Colors.RESET}")
+            print()
+            
+            # ACTION BIAS MONITORING
+            print(f"{Colors.BOLD}Action Bias Monitor{Colors.RESET}")
             print("-" * 40)
             
             if action_stats:
