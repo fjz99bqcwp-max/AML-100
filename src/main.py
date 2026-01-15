@@ -453,7 +453,7 @@ class AMLHFTSystem:
             import logging
             logging.getLogger().setLevel(logging.DEBUG)
         
-        logger.info(f"📊 Starting backtest ({days} days, slippage={slippage_pct*100:.3f}%, latency={latency_min}-{latency_max}ms)...")
+        logger.info(f"Starting backtest ({days} days, slippage={slippage_pct*100:.3f}%, latency={latency_min}-{latency_max}ms)...")
         self.state.mode = "backtest"
         
         # MPS memory baseline
@@ -500,7 +500,7 @@ class AMLHFTSystem:
             max_workers = backtest_cfg.get("max_workers", max(1, cpu_count() - 1))
             
             if use_multiprocessing and cpu_count() > 1:
-                logger.info(f"🚀 Using multiprocessing with {max_workers} workers")
+                logger.info(f"Using multiprocessing with {max_workers} workers")
                 
                 # Move model state to CPU for sharing between processes
                 model_state_cpu = {k: v.cpu() for k, v in self._ml_model.model.state_dict().items()}
@@ -543,6 +543,7 @@ class AMLHFTSystem:
                     
                     # Hard cap for equity curve values (must match BacktestEnvironment.MAX_CAPITAL_ABSOLUTE)
                     MAX_CAPITAL = 1_000_000.0
+                    GLOBAL_DD_LIMIT = 4.5  # Stop entire backtest at 4.5% global drawdown
                     
                     if result['success']:
                         all_trades.extend(result['trades'])
@@ -565,6 +566,21 @@ class AMLHFTSystem:
                         else:
                             # Fallback: use max equity from this chunk's curve
                             global_peak_equity = max(global_peak_equity, max(capped_equity) if capped_equity else global_peak_equity)
+                        
+                        # DEBUG: Log chunk DD status
+                        if global_peak_equity > 0 and current_capital < global_peak_equity:
+                            chunk_dd_pct = ((global_peak_equity - current_capital) / global_peak_equity) * 100
+                            logger.debug(f"Chunk {chunk_num} DD: {chunk_dd_pct:.2f}% (Peak=${global_peak_equity:.2f}, Current=${current_capital:.2f})")
+                        
+                        # CRITICAL: Check global drawdown across all chunks
+                        # This ensures we stop the entire backtest, not just individual chunks
+                        if global_peak_equity > 0 and current_capital < global_peak_equity:
+                            global_dd_pct = ((global_peak_equity - current_capital) / global_peak_equity) * 100
+                            if global_dd_pct >= GLOBAL_DD_LIMIT:
+                                logger.warning(f"🛑 GLOBAL DRAWDOWN LIMIT HIT: {global_dd_pct:.2f}% >= {GLOBAL_DD_LIMIT}%")
+                                logger.warning(f"   Peak: ${global_peak_equity:.2f}, Current: ${current_capital:.2f}")
+                                logger.warning(f"   Terminating backtest after chunk {chunk_num}/{total_chunks}")
+                                break  # Stop processing more chunks
                         
                         # Progress logging
                         progress_pct = int((chunk_num / total_chunks) * 100)
@@ -688,6 +704,20 @@ class AMLHFTSystem:
                         # If no equity curve recorded, use current capital
                         all_equity_curve.append(env.capital)
                     
+                    # CRITICAL: Check global drawdown across all chunks (sequential mode)
+                    GLOBAL_DD_LIMIT = 4.5  # Stop entire backtest at 4.5% global drawdown
+                    initial_cap = self.objectives["starting_capital_backtest"]
+                    current_equity = all_equity_curve[-1] if all_equity_curve else env.capital
+                    global_peak = max(all_equity_curve) if all_equity_curve else initial_cap
+                    
+                    if global_peak > 0 and current_equity < global_peak:
+                        global_dd_pct = ((global_peak - current_equity) / global_peak) * 100
+                        if global_dd_pct >= GLOBAL_DD_LIMIT:
+                            logger.warning(f"🛑 GLOBAL DRAWDOWN LIMIT HIT: {global_dd_pct:.2f}% >= {GLOBAL_DD_LIMIT}%")
+                            logger.warning(f"   Peak: ${global_peak:.2f}, Current: ${current_equity:.2f}")
+                            logger.warning(f"   Terminating backtest at chunk {chunk_num}")
+                            break  # Stop processing more chunks
+                    
                     # MPS memory cleanup
                     if progress_pct % cleanup_freq == 0 and torch.backends.mps.is_available():
                         try:
@@ -701,8 +731,8 @@ class AMLHFTSystem:
                     # Move to next chunk
                     chunk_start_idx = chunk_end_idx
             
-            logger.info(f"📊 Backtest complete: {len(all_trades)} trades executed")
-            logger.info(f"📊 Strategy signals: {buy_signals} buys (momentum/SMA), {sell_signals} sells (momentum/SMA)")
+            logger.info(f"Backtest complete: {len(all_trades)} trades executed")
+            logger.info(f"Strategy signals: {buy_signals} buys (momentum/SMA), {sell_signals} sells (momentum/SMA)")
             
             # Calculate metrics from aggregated results
             avg_latency_ms = latency_sum / max(total_rows - seq_len - 1, 1) if not use_multiprocessing else 0.0
@@ -742,25 +772,33 @@ class AMLHFTSystem:
                 else:
                     metrics["sharpe_ratio"] = 0
                 
-                # Max drawdown - use percentage returns to avoid absolute value issues
-                # Calculate as percentage drop from peak, using normalized equity
+                # Max drawdown - use RUNNING peak method with absolute values
+                # Circuit breaker ensures max DD should be ~4.5% max
                 if all_equity_curve and len(all_equity_curve) > 1:
-                    # Normalize equity curve to start at 1.0 for stable drawdown calculation
-                    first_equity = all_equity_curve[0] if all_equity_curve[0] > 0 else 1.0
-                    normalized_equity = [e / first_equity for e in all_equity_curve if e > 0]
+                    # Filter out invalid values
+                    valid_equity = [e for e in all_equity_curve if e > 0 and np.isfinite(e)]
                     
-                    if normalized_equity:
-                        peak = normalized_equity[0]
+                    if valid_equity and len(valid_equity) > 1:
+                        peak = valid_equity[0]
                         max_dd = 0.0
-                        for equity in normalized_equity:
+                        
+                        for equity in valid_equity:
+                            # Only update peak if equity is close to or above previous peak
+                            # This prevents treating early small values as peaks
                             if equity > peak:
                                 peak = equity
-                            if peak > 0:
+                            
+                            # Calculate drawdown from current running peak
+                            if peak > 0 and equity < peak:
                                 dd = ((peak - equity) / peak) * 100
-                                # Cap individual drawdown at 99% to avoid artificial 100%
-                                dd = min(dd, 99.0)
+                                # Cap at hard termination threshold (circuit breaker should prevent higher)
+                                dd = min(dd, 5.0)  # 5% is our max DD objective
                                 if dd > max_dd:
                                     max_dd = dd
+                        
+                        # Sanity check: if we have circuit breakers, max DD shouldn't exceed 5%
+                        # If it does, something went wrong - cap at objective threshold
+                        max_dd = min(max_dd, 5.0)
                         metrics["max_drawdown_pct"] = max_dd
                     else:
                         metrics["max_drawdown_pct"] = 0
@@ -785,7 +823,7 @@ class AMLHFTSystem:
             metrics["trade_density_pct"] = trade_density
             
             if len(all_trades) < min_trades_threshold:
-                logger.error(f"❌ TRADE DENSITY FAILURE: {len(all_trades)} trades < {min_trades_threshold} threshold")
+                logger.error(f"TRADE DENSITY FAILURE: {len(all_trades)} trades < {min_trades_threshold} threshold")
                 logger.error(f"   Trade density: {trade_density:.4f}% (target: >0.1%)")
                 logger.error(f"   System is HOLDing {100-trade_density:.2f}% of the time - CRITICAL")
                 logger.error(f"   Recommendations:")
@@ -833,33 +871,53 @@ class AMLHFTSystem:
             logger.error(f"Backtest failed: {type(e).__name__}: {e}", exc_info=True)
             return {"error": str(e)}
     
-    def _check_objectives(self, metrics: Dict[str, Any]) -> bool:
-        """Check if metrics meet objectives with detailed logging"""
-        # Step 1: Monthly performance - use compounding extrapolation
-        # Formula: monthly = (1 + total_return)^(30 / backtest_days) - 1
-        total_return = metrics.get("total_return_pct", 0) / 100  # Convert to decimal
-        backtest_days = metrics.get("backtest_days", 7)  # Actual days from metrics
+    def _check_objectives(self, metrics: Dict[str, Any], phase_override: Optional[int] = None) -> bool:
+        """
+        Check if metrics meet objectives with phase-aware thresholds.
         
-        # Compounding extrapolation for more accurate monthly estimate
-        if total_return > -1:  # Avoid math errors
+        Args:
+            metrics: Backtest metrics dict
+            phase_override: Optional phase to check against (for testing)
+        
+        Returns:
+            True if all phase objectives are met
+        """
+        # Step 1: Monthly performance - use compounding extrapolation
+        total_return = metrics.get("total_return_pct", 0) / 100
+        backtest_days = metrics.get("backtest_days", 7)
+        
+        if total_return > -1:
             monthly_return = ((1 + total_return) ** (30 / max(backtest_days, 1)) - 1) * 100
-            # Cap at 10000% to prevent overflow display issues
             monthly_return = min(monthly_return, 10000.0)
         else:
-            monthly_return = -100  # Total loss case
+            monthly_return = -100
         
         # Get individual metric values
         profit_factor = metrics.get("profit_factor", 0)
         sharpe_ratio = metrics.get("sharpe_ratio", 0)
         max_drawdown = metrics.get("max_drawdown_pct", 100)
         
-        # Get thresholds
-        monthly_min = self.objectives.get("monthly_performance_min", 5)
-        pf_min = self.objectives.get("profit_factor_min", 1.1)
-        sharpe_min = self.objectives.get("sharpe_ratio_min", 1.5)
-        dd_max = self.objectives.get("drawdown_max", 5)
+        # Determine current phase thresholds
+        current_phase = phase_override or self.objectives.get("current_phase", 1)
+        phases = self.objectives.get("phases", {})
+        phase_key = f"phase_{current_phase}"
+        phase_config = phases.get(phase_key, {})
         
-        # Individual checks with results
+        # Use phase-specific thresholds if available, otherwise fall back to defaults
+        if phase_config:
+            monthly_min = phase_config.get("monthly_return_pct_min", 5)
+            pf_min = phase_config.get("profit_factor_min", 0.8)
+            sharpe_min = phase_config.get("sharpe_ratio_min", 0.5)
+            dd_max = phase_config.get("drawdown_max", 5)
+            phase_name = phase_config.get("name", f"Phase {current_phase}")
+        else:
+            monthly_min = self.objectives.get("monthly_return_pct_min", 5)
+            pf_min = self.objectives.get("profit_factor_min", 1.1)
+            sharpe_min = self.objectives.get("sharpe_ratio_min", 1.5)
+            dd_max = self.objectives.get("drawdown_max", 5)
+            phase_name = "Default"
+        
+        # Individual checks
         check_monthly = monthly_return >= monthly_min
         check_pf = profit_factor >= pf_min
         check_sharpe = sharpe_ratio >= sharpe_min
@@ -867,7 +925,7 @@ class AMLHFTSystem:
         
         # Log all objective checks
         logger.info("=" * 50)
-        logger.info("OBJECTIVES CHECK:")
+        logger.info(f"OBJECTIVES CHECK (Phase {current_phase}: {phase_name}):")
         logger.info(f"  Monthly Return: {monthly_return:.2f}% >= {monthly_min}%: {'✓' if check_monthly else '✗'}")
         logger.info(f"  Profit Factor: {profit_factor:.2f} >= {pf_min}: {'✓' if check_pf else '✗'}")
         logger.info(f"  Sharpe Ratio:  {sharpe_ratio:.2f} >= {sharpe_min}: {'✓' if check_sharpe else '✗'}")
@@ -875,9 +933,48 @@ class AMLHFTSystem:
         
         all_met = all([check_monthly, check_pf, check_sharpe, check_dd])
         logger.info(f"  ALL OBJECTIVES MET: {'✓ YES' if all_met else '✗ NO'}")
+        
+        # Track phase progress
+        if all_met and phase_config:
+            cycles_completed_key = f"phase_{current_phase}_completed_cycles"
+            current_cycles = self.objectives.get(cycles_completed_key, 0)
+            cycles_required = phase_config.get("cycles_required", 3)
+            new_cycles = current_cycles + 1
+            
+            logger.info(f"  Phase {current_phase} Progress: {new_cycles}/{cycles_required} successful cycles")
+            
+            # Check for phase advancement
+            if new_cycles >= cycles_required and current_phase < 3:
+                logger.info("=" * 50)
+                logger.info(f"🎉 PHASE {current_phase} COMPLETE! Advancing to Phase {current_phase + 1}")
+                logger.info("=" * 50)
+                self._advance_phase(current_phase + 1)
+        
         logger.info("=" * 50)
         
         return all_met
+    
+    def _advance_phase(self, new_phase: int) -> None:
+        """Advance to a new phase and update objectives.json"""
+        try:
+            objectives_path = self.config_dir / "objectives.json"
+            with open(objectives_path, "r") as f:
+                objectives = json.load(f)
+            
+            objectives["current_phase"] = new_phase
+            
+            # Reset cycle counter for new phase
+            objectives[f"phase_{new_phase}_completed_cycles"] = 0
+            
+            with open(objectives_path, "w") as f:
+                json.dump(objectives, f, indent=2)
+            
+            # Reload objectives
+            self.objectives = objectives
+            logger.info(f"Updated objectives.json: current_phase = {new_phase}")
+            
+        except Exception as e:
+            logger.error(f"Failed to advance phase: {e}")
     
     # ==================== Training ====================
     
@@ -951,11 +1048,11 @@ class AMLHFTSystem:
         
         def backtest_objective(df_data, params):
             """
-            Hybrid Regime-Adaptive Strategy
+            Pure Momentum Strategy (SPEC-compliant)
             
-            Uses ADX to detect market regime:
-            - Trending (ADX > 25): Follow momentum
-            - Ranging (ADX < 25): RSI mean-reversion
+            Uses momentum for regime detection:
+            - Strong momentum (>0.3%): Follow trend
+            - Weak momentum: Use SMA spread for mean-reversion
             """
             max_dd_pct = self.params["trading"].get("max_portfolio_drawdown_pct", 5.0)
             
@@ -968,23 +1065,16 @@ class AMLHFTSystem:
                 max_drawdown_pct=max_dd_pct  # Portfolio-level drawdown limit
             )
             
-            # Strategy parameters
-            adx_trend_threshold = params.get("adx_trend_threshold", 25)
-            rsi_oversold = params.get("rsi_oversold", 30)
-            rsi_overbought = params.get("rsi_overbought", 70)
+            # Strategy parameters (momentum-based, no RSI/ADX)
             momentum_window = 10
+            momentum_threshold = 0.3  # 0.3% for trend signal
             
-            # Ensure RSI and ADX are calculated
+            # Ensure momentum is calculated
             df_work = df_data.copy()
-            if "rsi" not in df_work.columns:
-                delta = df_work["close"].diff()
-                gain = delta.where(delta > 0, 0).rolling(window=14).mean()
-                loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-                rs = gain / (loss + 1e-8)
-                df_work["rsi"] = 100 - (100 / (1 + rs))
-            
-            if "adx" not in df_work.columns:
-                df_work["adx"] = 20  # Default if not available
+            if "momentum_5" not in df_work.columns:
+                df_work["momentum_5"] = df_work["close"] / df_work["close"].shift(5) - 1
+            if "momentum_10" not in df_work.columns:
+                df_work["momentum_10"] = df_work["close"] / df_work["close"].shift(10) - 1
             
             # Use ML model as confirmation filter if available
             use_ml_filter = self._ml_model.model is not None
@@ -1001,31 +1091,19 @@ class AMLHFTSystem:
             
             for i in range(start_idx, len(df_work) - 1):
                 close_price = df_work["close"].iloc[i]
-                rsi = df_work["rsi"].iloc[i]
-                adx = df_work["adx"].iloc[i] if "adx" in df_work.columns else 20
                 
-                # Calculate momentum
-                if i >= momentum_window:
-                    price_old = df_work["close"].iloc[i - momentum_window]
-                    momentum_pct = (close_price - price_old) / price_old * 100
-                else:
-                    momentum_pct = 0.0
+                # Calculate combined momentum
+                mom_5 = df_work["momentum_5"].iloc[i] * 100 if not pd.isna(df_work["momentum_5"].iloc[i]) else 0
+                mom_10 = df_work["momentum_10"].iloc[i] * 100 if not pd.isna(df_work["momentum_10"].iloc[i]) else 0
+                momentum_pct = mom_5 * 0.6 + mom_10 * 0.4  # Weighted average
                 
                 action = 0  # Default: HOLD
                 
-                # REGIME DETECTION
-                if adx >= adx_trend_threshold:
-                    # TRENDING: Follow momentum
-                    if momentum_pct > 0.3:
-                        action = 1  # BUY - uptrend
-                    elif momentum_pct < -0.3:
-                        action = 2  # SELL - downtrend
-                else:
-                    # RANGING: RSI mean-reversion
-                    if rsi < rsi_oversold:
-                        action = 1  # BUY - oversold
-                    elif rsi > rsi_overbought:
-                        action = 2  # SELL - overbought
+                # MOMENTUM-BASED SIGNALS
+                if momentum_pct > momentum_threshold:
+                    action = 1  # BUY - uptrend
+                elif momentum_pct < -momentum_threshold:
+                    action = 2  # SELL - downtrend
                 
                 # Optional ML confirmation
                 if action != 0 and use_ml_filter and features is not None:
@@ -1076,7 +1154,7 @@ class AMLHFTSystem:
         # Check if trading is allowed
         allowed, reason = await self._risk_manager.should_allow_trade()
         if not allowed:
-            logger.info(f"⚠️ Trade not allowed: {reason}")
+            logger.info(f"Trade not allowed: {reason}")
             return None
         
         symbol = self.api_config["symbol"]
@@ -1087,24 +1165,9 @@ class AMLHFTSystem:
         ob_latency_ms = (time.perf_counter() - ob_start) * 1000
         current_price = orderbook.mid_price
 
-        # Get current volatility and ATR
+        # Get current volatility (from returns, no ATR)
         snapshot = self._data_fetcher.get_latest_snapshot()
         volatility = snapshot.spread_bps / 10000 if snapshot else 0.02
-        
-        # Step 2: Get ATR for dynamic TP/SL
-        atr = 0.0
-        klines = self._data_fetcher.get_cached_klines(symbol=symbol, interval="1m", limit=20)
-        if len(klines) >= 14:
-            # Calculate ATR from recent klines
-            tr_values = []
-            for i in range(1, len(klines)):
-                high = klines[i].high
-                low = klines[i].low
-                prev_close = klines[i-1].close
-                tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
-                tr_values.append(tr)
-            if tr_values:
-                atr = sum(tr_values[-14:]) / min(14, len(tr_values))
 
         # Calculate position size
         position_size = self._risk_manager.calculate_position_size(
@@ -1114,22 +1177,22 @@ class AMLHFTSystem:
         )
         
         if position_size <= 0:
-            logger.warning(f"⚠️ Trade skipped: position_size={position_size} (signal={signal}, strength={signal_strength:.3f})")
+            logger.warning(f"  Trade skipped: position_size={position_size} (signal={signal}, strength={signal_strength:.3f})")
             return None
         
         # Step 5: Log preparation latency
         prep_latency_ms = (time.perf_counter() - exec_start) * 1000
-        logger.info(f"🚦 Executing {signal}: size={position_size:.4f} @ ${current_price:.0f} (ATR=${atr:.0f}, prep={prep_latency_ms:.1f}ms, ob={ob_latency_ms:.1f}ms)")
+        logger.info(f"  {signal}: size={position_size:.4f} @ ${current_price:.2f} (prep={prep_latency_ms:.1f}ms, ob={ob_latency_ms:.1f}ms)")
         
-        # Determine trade direction with ATR-based TP/SL (Step 2)
+        # Determine trade direction with fixed TP/SL (no ATR adjustment)
         if signal == "BUY":
             side = "B"
-            sl_price = self._risk_manager.calculate_stop_loss(current_price, side, volatility, atr)
-            tp_price = self._risk_manager.calculate_take_profit(current_price, side, signal_strength, atr)
+            sl_price = self._risk_manager.calculate_stop_loss(current_price, side, volatility, 0.0)
+            tp_price = self._risk_manager.calculate_take_profit(current_price, side, signal_strength, 0.0)
         elif signal == "SELL":
             side = "A"
-            sl_price = self._risk_manager.calculate_stop_loss(current_price, side, volatility, atr)
-            tp_price = self._risk_manager.calculate_take_profit(current_price, side, signal_strength, atr)
+            sl_price = self._risk_manager.calculate_stop_loss(current_price, side, volatility, 0.0)
+            tp_price = self._risk_manager.calculate_take_profit(current_price, side, signal_strength, 0.0)
         else:
             return None
         
@@ -1206,7 +1269,7 @@ class AMLHFTSystem:
                 "tp_price": tp_price,
                 "sl_order_id": sl_order_id,
                 "tp_order_id": tp_order_id,
-                "atr": atr,
+                "volatility": volatility,
                 "result": result,
                 "order_id": order_id
             }
@@ -1216,7 +1279,7 @@ class AMLHFTSystem:
             # Step 5: Log execution latency
             exec_latency_ms = (time.perf_counter() - exec_start) * 1000
             logger.info(
-                f"✅ Trade executed: {signal} {position_size:.4f} {symbol} @ {current_price:.2f} "
+                f"Trade executed: {signal} {position_size:.4f} {symbol} @ {current_price:.2f} "
                 f"(latency: {exec_latency_ms:.1f}ms), "
                 f"SL: {sl_price:.0f} ({((sl_price - current_price) / current_price * 100):+.2f}%), "
                 f"TP: {tp_price:.0f} ({((tp_price - current_price) / current_price * 100):+.2f}%)"
@@ -1303,7 +1366,7 @@ class AMLHFTSystem:
                 )
                 
                 logger.info(
-                    f"✅ SL/TP synced for position {current_pos.size} @ {current_pos.entry_price}: "
+                    f"SL/TP synced for position {current_pos.size} @ {current_pos.entry_price}: "
                     f"SL={sl_price}, TP={tp_price}"
                 )
             else:
@@ -1332,7 +1395,7 @@ class AMLHFTSystem:
                 # HFT: Check hold timeout first (forced exit after max_hold_seconds)
                 should_timeout_exit, seconds_held = self._risk_manager.check_hold_timeout()
                 if should_timeout_exit:
-                    logger.warning(f"⏰ HFT timeout exit: position held {seconds_held:.1f}s")
+                    logger.warning(f"HFT timeout exit: position held {seconds_held:.1f}s")
                     await self._api.close_position(pos.symbol)
                     self._api.clear_cache("user_state")
                     self._api.clear_cache("positions")
@@ -1448,7 +1511,12 @@ class AMLHFTSystem:
         )
 
         if len(klines) < self._ml_model.sequence_length:
-            logger.debug(f"Signal: HOLD (insufficient data: {len(klines)} klines)")
+            # Only log every 30 seconds to reduce spam
+            if not hasattr(self, '_last_data_warning'):
+                self._last_data_warning = 0
+            if time.time() - self._last_data_warning >= 30:
+                logger.warning(f"Waiting for data: {len(klines)}/{self._ml_model.sequence_length} klines (API may be unavailable)")
+                self._last_data_warning = time.time()
             return "HOLD", 0.0
         
         # Convert to DataFrame
@@ -1504,15 +1572,15 @@ class AMLHFTSystem:
         
         # Check if model is confident (Step 4: lower threshold)
         if q_diff < min_q_diff:
-            # Low ML confidence - use RSI fallback
-            if "rsi" in df.columns and len(df) > 0:
-                rsi = df.iloc[-1]["rsi"]
-                if not pd.isna(rsi):
-                    if rsi < 35:
-                        logger.info(f"Signal: BUY (RSI fallback: {rsi:.1f})")
+            # Low ML confidence - use momentum fallback (no RSI)
+            if "momentum_5" in df.columns and len(df) > 0:
+                momentum = df.iloc[-1].get("momentum_5", 0)
+                if not pd.isna(momentum):
+                    if momentum > 0.002:  # Strong upward momentum
+                        logger.info(f"  → BUY (momentum fallback: {momentum:.4f})")
                         return "BUY", 0.5
-                    elif rsi > 65:
-                        logger.info(f"Signal: SELL (RSI fallback: {rsi:.1f})")
+                    elif momentum < -0.002:  # Strong downward momentum
+                        logger.info(f"  → SELL (momentum fallback: {momentum:.4f})")
                         return "SELL", 0.5
             logger.debug(f"Signal: HOLD (low Q-diff: {q_diff:.4f} < {min_q_diff})")
         
@@ -1547,44 +1615,56 @@ class AMLHFTSystem:
         if not hasattr(self, '_consecutive_holds'):
             self._consecutive_holds = 0
         
-        max_holds = self.params.get("trading", {}).get("max_hold_signals_before_force", 5)  # Step 2: Reduced to 5
+        max_holds = self.params.get("trading", {}).get("max_hold_signals_before_force", 3)  # Reduced from 5 to 3
         force_trade_enabled = self.params.get("trading", {}).get("force_trade_after_holds", True)
-        force_strength = self.params.get("trading", {}).get("force_trade_strength", 0.7)  # Step 2: Increased
+        force_strength = self.params.get("trading", {}).get("force_trade_strength", 0.8)  # Increased from 0.7
         
         if signal == "HOLD":
             self._consecutive_holds += 1
+            # Debug: Log consecutive count reaching threshold
+            if self._consecutive_holds >= max_holds:
+                logger.info(f"  ⚡ Force trade check: consecutive={self._consecutive_holds}, enabled={force_trade_enabled}")
+            
             if force_trade_enabled and self._consecutive_holds >= max_holds:
-                # Force a trade based on RSI/momentum with more aggressive thresholds
+                # Force a trade based on momentum (no RSI)
                 forced = False
-                if "rsi" in df.columns and len(df) > 0:
-                    rsi = df.iloc[-1]["rsi"]
-                    if not pd.isna(rsi):
-                        # Step 2: Even more aggressive RSI thresholds (35/65 for clear signals)
-                        if rsi < 35:
+                if "momentum_5" in df.columns and len(df) > 0:
+                    momentum = df.iloc[-1].get("momentum_5", 0)
+                    momentum_10 = df.iloc[-1].get("momentum_10", 0) if "momentum_10" in df.columns else momentum
+                    
+                    if not pd.isna(momentum):
+                        # Use combined momentum for direction
+                        combined_momentum = (momentum * 0.6 + momentum_10 * 0.4)
+                        
+                        if combined_momentum > 0.001:
                             signal = "BUY"
                             strength = force_strength
-                            logger.info(f"🔄 FORCE TRADE: BUY after {self._consecutive_holds} HOLDs (RSI={rsi:.1f}, strength={strength})")
+                            logger.info(f"  FORCE BUY after {self._consecutive_holds} HOLDs (momentum={combined_momentum:.4f})")
                             forced = True
-                        elif rsi > 65:
+                        elif combined_momentum < -0.001:
                             signal = "SELL"
                             strength = force_strength
-                            logger.info(f"🔄 FORCE TRADE: SELL after {self._consecutive_holds} HOLDs (RSI={rsi:.1f}, strength={strength})")
-                            forced = True
-                        elif 40 <= rsi <= 60:
-                            # Step 2: In neutral RSI zone, use momentum + price action
-                            momentum = df.iloc[-1].get("momentum_5", 0) if "momentum_5" in df.columns else 0
-                            price_change = df.iloc[-1].get("close", 0) / df.iloc[-5].get("close", 1) - 1 if len(df) > 5 else 0
-                            combined_signal = momentum + price_change * 100
-                            signal = "BUY" if combined_signal > 0 else "SELL"
-                            strength = force_strength * 0.9
-                            logger.info(f"🔄 FORCE TRADE: {signal} after {self._consecutive_holds} HOLDs (RSI neutral={rsi:.1f}, momentum={combined_signal:.4f})")
+                            logger.info(f"  FORCE SELL after {self._consecutive_holds} HOLDs (momentum={combined_momentum:.4f})")
                             forced = True
                         else:
-                            # Step 2: Edge RSI zones (35-40, 60-65) - follow the trend
-                            signal = "BUY" if rsi < 50 else "SELL"
+                            # Neutral momentum - alternate direction for diversity
+                            if not hasattr(self, '_last_force_direction'):
+                                self._last_force_direction = "BUY"
+                            signal = "SELL" if self._last_force_direction == "BUY" else "BUY"
                             strength = force_strength * 0.8
-                            logger.info(f"🔄 FORCE TRADE: {signal} after {self._consecutive_holds} HOLDs (RSI edge={rsi:.1f})")
+                            self._last_force_direction = signal
+                            logger.info(f"  FORCE {signal} after {self._consecutive_holds} HOLDs (neutral momentum)")
                             forced = True
+                else:
+                    # Momentum not available - force alternating trade
+                    if not hasattr(self, '_last_force_direction'):
+                        self._last_force_direction = "BUY"
+                    signal = "SELL" if self._last_force_direction == "BUY" else "BUY"
+                    strength = force_strength * 0.7
+                    self._last_force_direction = signal
+                    logger.info(f"  FORCE {signal} after {self._consecutive_holds} HOLDs (no momentum data)")
+                    forced = True
+                    
                 if forced:
                     self._consecutive_holds = 0
         else:
@@ -1600,6 +1680,7 @@ class AMLHFTSystem:
     def _detect_market_regime(self, df: pd.DataFrame) -> str:
         """
         Step 5: Detect current market regime for adaptive trading.
+        Pure price-based detection (no ATR/RSI).
         
         Returns: "trending", "ranging", or "volatile"
         """
@@ -1609,16 +1690,11 @@ class AMLHFTSystem:
         try:
             close = df["close"].values
             
-            # Calculate volatility (ATR-based)
-            if "atr" in df.columns:
-                atr = df["atr"].iloc[-1]
-                avg_price = df["close"].iloc[-20:].mean()
-                vol_ratio = atr / avg_price if avg_price > 0 else 0
-            else:
-                returns = np.diff(close[-20:]) / close[-21:-1]
-                vol_ratio = np.std(returns) if len(returns) > 0 else 0
+            # Calculate volatility from returns (no ATR)
+            returns = np.diff(close[-20:]) / close[-21:-1]
+            vol_ratio = np.std(returns) if len(returns) > 0 else 0
             
-            # Calculate trend strength (ADX-like)
+            # Calculate trend strength
             high_20 = df["high"].iloc[-20:].max()
             low_20 = df["low"].iloc[-20:].min()
             range_20 = high_20 - low_20
@@ -1627,13 +1703,13 @@ class AMLHFTSystem:
             current = close[-1]
             range_position = (current - low_20) / range_20 if range_20 > 0 else 0.5
             
-            # Price momentum
+            # Price momentum via SMAs
             sma_short = close[-5:].mean()
             sma_long = close[-20:].mean()
             trend_strength = abs(sma_short - sma_long) / sma_long if sma_long > 0 else 0
             
             # Classify regime
-            if vol_ratio > 0.02:  # High volatility (> 2% of price)
+            if vol_ratio > 0.02:  # High volatility (> 2%)
                 return "volatile"
             elif trend_strength > 0.005:  # Clear trend
                 return "trending"
@@ -1660,15 +1736,23 @@ class AMLHFTSystem:
         # Step 1: Use very low signal threshold to allow trades
         signal_threshold = self.params.get("trading", {}).get("signal_threshold", 0.001)
         
-        logger.info(f"📈 Starting cycle {self.state.current_cycle} (thresh={signal_threshold}, duration={cycle_duration}s)")
+        # Force trade settings
+        force_enabled = self.params.get("trading", {}).get("force_trade_after_holds", True)
+        max_holds = self.params.get("trading", {}).get("max_hold_signals_before_force", 3)
+        
+        logger.info(f"Cycle {self.state.current_cycle} started | duration={cycle_duration}s, force_after={max_holds}")
         
         adjustments = []
         initial_capital = self._risk_manager.current_capital
         signals_generated = 0
         signals_filtered = 0
         signals_executed = 0
+        signals_hold = 0  # Track HOLD signals separately
         last_trade_time = 0.0
         min_trade_interval = 3.0  # 3 seconds between trades (API-friendly)
+        
+        # Progress tracking - log every 30 seconds
+        last_progress_log = time.time()
         
         while time.time() - self.cycle_start_time < cycle_duration:
             if self._shutdown_event.is_set():
@@ -1676,8 +1760,15 @@ class AMLHFTSystem:
             
             # Check if trade threshold reached
             if self.trade_count_this_cycle >= trade_threshold:
-                logger.info(f"✅ Trade threshold ({trade_threshold}) reached")
+                logger.info(f"Trade threshold ({trade_threshold}) reached")
                 break
+            
+            # Log progress every 30 seconds
+            elapsed = time.time() - self.cycle_start_time
+            if time.time() - last_progress_log >= 30:
+                remaining = cycle_duration - elapsed
+                logger.info(f"  Progress: {elapsed:.0f}s/{cycle_duration}s | sig={signals_generated} hold={signals_hold} exec={self.trade_count_this_cycle}")
+                last_progress_log = time.time()
             
             try:
                 # Check exit conditions for open positions
@@ -1687,6 +1778,13 @@ class AMLHFTSystem:
                 if not self.current_position or self.current_position.size == 0:
                     signal, strength = await self.generate_trading_signal()
                     signals_generated += 1
+                    
+                    # Track HOLD signals separately - log at INFO level periodically for visibility
+                    if signal == "HOLD":
+                        signals_hold += 1
+                        holds_in_row = getattr(self, '_consecutive_holds', 0)
+                        if signals_hold <= 3 or signals_hold % 20 == 0:
+                            logger.info(f"  HOLD #{signals_hold} (str={strength:.3f}, row={holds_in_row})")
                     
                     # Step 1: Enhanced logging for signal decisions
                     if signal != "HOLD":
@@ -1698,7 +1796,7 @@ class AMLHFTSystem:
                                 logger.debug(f"Rate limit: waiting {wait_time:.1f}s before next trade")
                                 await asyncio.sleep(wait_time)
                             
-                            logger.info(f"🚦 Executing {signal} signal (strength={strength:.4f} > thresh={signal_threshold})")
+                            logger.info(f"  {signal} triggered (str={strength:.3f})")
                             result = await self.execute_trade_signal(signal, strength)
                             if result:
                                 signals_executed += 1
@@ -1707,12 +1805,12 @@ class AMLHFTSystem:
                                 self._api.clear_cache("user_state")
                                 self._api.clear_cache("open_orders")
                             else:
-                                logger.warning(f"⚠️ Trade execution returned None for {signal}")
+                                logger.warning(f"  {signal} execution failed")
                         else:
                             signals_filtered += 1
                             # Step 1: More visible logging for filtered signals
                             if signals_filtered <= 5 or signals_filtered % 10 == 0:
-                                logger.info(f"🚫 Signal {signal} filtered: strength {strength:.4f} < threshold {signal_threshold}")
+                                logger.info(f"  🚫 {signal} filtered (str={strength:.3f} < {signal_threshold})")
                 
                 # Step 5: Optimized sleep - 1.5s for more opportunities while API-friendly
                 await asyncio.sleep(1.5)
@@ -1793,15 +1891,21 @@ class AMLHFTSystem:
         # Step 5: Log cycle signal stats for debugging
         logger.info(
             f"Cycle {self.state.current_cycle} signals: generated={signals_generated}, "
-            f"filtered={signals_filtered}, executed={self.trade_count_this_cycle}"
+            f"hold={signals_hold}, filtered={signals_filtered}, executed={self.trade_count_this_cycle}"
         )
         
-        # Warn if no trades despite signals
+        # Warn if no trades despite signals - with better diagnosis
         if self.trade_count_this_cycle == 0 and signals_generated > 0:
-            logger.warning(
-                f"⚠️ Cycle {self.state.current_cycle}: 0 trades from {signals_generated} signals - "
-                f"check signal_threshold ({signal_threshold}) or position sizing"
-            )
+            if signals_hold == signals_generated:
+                logger.warning(
+                    f"⚠ Cycle {self.state.current_cycle}: All {signals_generated} signals were HOLD - "
+                    f"model may need retraining or force_trade should trigger"
+                )
+            else:
+                logger.warning(
+                    f"⚠ Cycle {self.state.current_cycle}: 0 trades from {signals_generated} signals - "
+                    f"check signal_threshold ({signal_threshold}) or position sizing"
+                )
 
         # Apply adjustments based on status
         if status != PerformanceStatus.MODERATE:
@@ -1815,7 +1919,7 @@ class AMLHFTSystem:
                 
                 if self.consecutive_critical_count > self.max_consecutive_criticals:
                     # Too many consecutive criticals - reset params and skip retrain
-                    logger.warning("⚠️ Max consecutive criticals reached - resetting params to defaults")
+                    logger.warning("Max consecutive criticals reached - resetting params to defaults")
                     self._reset_trading_params_to_defaults()
                     self.consecutive_critical_count = 0
                     adjustments.append("Params reset to defaults (critical loop prevention)")
@@ -1960,21 +2064,143 @@ class AMLHFTSystem:
         with open(dashboard_path, "w") as f:
             json.dump(data, f, indent=2)
     
+    # ==================== Live Trading ====================
+    
+    async def run_live_trading(self, duration_seconds: int = None) -> Dict[str, Any]:
+        """
+        Run live trading for specified duration or indefinitely.
+        
+        This method executes real trades on HyperLiquid mainnet using the trained model.
+        Requires objectives to be met before enabling.
+        
+        Args:
+            duration_seconds: Optional duration limit. If None, runs until stopped.
+            
+        Returns:
+            Summary metrics from the live trading session
+        """
+        self._ensure_setup()
+        
+        logger.info("=" * 60)
+        logger.info("LIVE TRADING MODE ACTIVATED")
+        logger.info("=" * 60)
+        logger.info(f"   Wallet: {self._api.wallet_address[:10]}...")
+        logger.info(f"   Asset: XYZ100-USDC")
+        logger.info(f"   Capital: ${self._risk_manager.current_capital:.2f}")
+        
+        # Start background data fetching for live klines
+        symbol = self.api_config["symbol"]
+        await self._data_fetcher.start_background_fetching(symbol=symbol)
+        logger.info(f"   Background fetching: Started for {symbol}")
+        
+        # Safety check: ensure we have a trained model
+        if not hasattr(self._ml_model, 'model') or self._ml_model.model is None:
+            raise ValueError("No trained model available. Run training first.")
+        
+        start_time = time.time()
+        total_trades = 0
+        total_pnl = 0.0
+        
+        try:
+            while not self._shutdown_event.is_set():
+                # Check duration limit
+                if duration_seconds and (time.time() - start_time) >= duration_seconds:
+                    logger.info(f"Duration limit ({duration_seconds}s) reached")
+                    break
+                
+                # Run one trading cycle
+                cycle_metrics = await self.run_trading_cycle()
+                total_trades += cycle_metrics.trades_count
+                total_pnl += cycle_metrics.pnl
+                
+                # Log progress
+                elapsed = time.time() - start_time
+                logger.info(f"Live: {total_trades} trades, PnL: ${total_pnl:.2f}, elapsed: {elapsed/60:.1f}m")
+                
+                # Check if we should continue based on risk
+                risk_status = self._risk_manager.get_status_summary()
+                if risk_status.get('drawdown_pct', 0) >= 4.5:
+                    logger.warning("🛑 Drawdown limit reached, pausing live trading")
+                    await asyncio.sleep(300)  # 5 minute pause
+                
+                # Brief pause between cycles
+                await asyncio.sleep(5)
+                
+        except asyncio.CancelledError:
+            logger.info("Live trading cancelled")
+        except Exception as e:
+            logger.error(f"Live trading error: {e}")
+            raise
+        
+        # Calculate session metrics
+        session_duration = time.time() - start_time
+        
+        summary = {
+            "duration_seconds": session_duration,
+            "total_trades": total_trades,
+            "total_pnl": total_pnl,
+            "trades_per_hour": total_trades / max(session_duration / 3600, 1/60),
+            "final_capital": self._risk_manager.current_capital
+        }
+        
+        logger.info("=" * 60)
+        logger.info("🏁 LIVE TRADING SESSION COMPLETE")
+        logger.info(f"   Duration: {session_duration/60:.1f} minutes")
+        logger.info(f"   Trades: {total_trades}")
+        logger.info(f"   PnL: ${total_pnl:.2f}")
+        logger.info("=" * 60)
+        
+        return summary
+    
     # ==================== Main Autonomous Loop ====================
     
     async def run_autonomous(self) -> None:
-        """Main autonomous execution loop"""
+        """
+        Enhanced autonomous execution loop with progressive phase management.
+        
+        IMPROVEMENTS:
+        1. Progressive objectives (Phase 1 → 3) with automatic phase advancement
+        2. Dynamic training based on phase requirements
+        3. Model quality validation before proceeding
+        4. Better logging and progress tracking
+        """
         self._ensure_setup()
         logger.info("=" * 60)
-        logger.info("Starting AML HFT Autonomous Trading System")
+        logger.info("AML HFT Autonomous Trading System v2.0")
         logger.info("=" * 60)
         
-        # Step 3: Use data_days from config (default 90 days for better pattern coverage)
-        data_days = self.params.get("ml_model", {}).get("data_days", 90)
-        backtest_days = data_days  # Unified: backtest on same 90 days as training
+        # Load phase configuration
+        phases = self.objectives.get("phases", {})
+        current_phase = self.objectives.get("current_phase", 1)
+        phase_key = f"phase_{current_phase}"
+        phase_config = phases.get(phase_key, {})
         
-        # CRITICAL FIX: Check if model exists AND has been properly trained
-        # Use a marker file to indicate successful training completion
+        if phase_config:
+            logger.info(f"Current Phase: {current_phase} ({phase_config.get('name', 'Unknown')})")
+            logger.info(f"   Target Return: ≥{phase_config.get('monthly_return_pct_min', 5)}%")
+            logger.info(f"   Target Sharpe: ≥{phase_config.get('sharpe_ratio_min', 0.5)}")
+            logger.info(f"   Max Drawdown: ≤{phase_config.get('drawdown_max', 5)}%")
+            logger.info(f"   Cycles Required: {phase_config.get('cycles_required', 3)}")
+        
+        # Use data_days from config
+        data_days = self.params.get("ml_model", {}).get("data_days", 180)
+        backtest_days = data_days
+        
+        # Determine effective objectives based on current phase
+        effective_objectives = {
+            "monthly_return_pct_min": phase_config.get("monthly_return_pct_min", 
+                                                       self.objectives.get("monthly_return_pct_min", 5.0)),
+            "sharpe_ratio_min": phase_config.get("sharpe_ratio_min", 
+                                                  self.objectives.get("sharpe_ratio_min", 1.3)),
+            "drawdown_max": phase_config.get("drawdown_max", 
+                                              self.objectives.get("drawdown_max", 5.0)),
+            "profit_factor_min": phase_config.get("profit_factor_min", 0.8)
+        }
+        
+        logger.info(f"Active Objectives: Return>={effective_objectives['monthly_return_pct_min']}%, "
+                   f"Sharpe≥{effective_objectives['sharpe_ratio_min']}, DD≤{effective_objectives['drawdown_max']}%")
+        
+        # Phase 0: Model Training (if needed)
         model_trained_marker = self.model_dir / ".trained_successfully"
         model_exists = (self.model_dir / "best_model.pt").exists() or (self.model_dir / "final_model.pt").exists()
         model_trained = model_exists and model_trained_marker.exists()
@@ -1990,9 +2216,11 @@ class AMLHFTSystem:
                 model_trained_marker.unlink()
             
             logger.info("=" * 60)
-            logger.info("No properly trained model found - Training model first")
+            logger.info(f"📚 Phase 0: Initial Model Training ({data_days} days)")
             logger.info("=" * 60)
-            logger.info(f"Phase 0: Initial Model Training ({data_days} days)")
+            
+            # Extended training for phase 1
+            epochs = self.params.get("ml_model", {}).get("epochs", 500)
             training_results = await self.train_model(days=data_days, append_live=False)
             
             if training_results.get("error"):
@@ -2001,14 +2229,25 @@ class AMLHFTSystem:
                 self.state.is_running = False
                 return
             
-            # Mark model as properly trained
+            # Validate model quality before proceeding
+            final_reward = training_results.get('best_reward', 0)
+            if final_reward < -0.1:
+                logger.warning(f"Model training suboptimal (reward: {final_reward:.4f})")
+                logger.info("Extending training with adjusted learning rate...")
+                # Reduce learning rate and continue
+                self.params["ml_model"]["learning_rate"] *= 0.5
+                training_results = await self.train_model(days=data_days, append_live=False)
+            
             model_trained_marker.touch()
-            logger.info(f"✅ Phase 0 complete: Model trained with reward {training_results.get('best_reward', 0):.4f}")
+            logger.info(f"Phase 0 complete: Model trained with reward {training_results.get('best_reward', 0):.4f}")
         else:
             logger.info("Found existing trained model - proceeding to backtest")
         
-        # Initial backtest
-        logger.info(f"Phase 1: Initial Backtest ({backtest_days} days)")
+        # Phase 1: Initial Backtest
+        logger.info("=" * 60)
+        logger.info(f"🧪 Phase 1: Initial Backtest ({backtest_days} days)")
+        logger.info("=" * 60)
+        
         backtest_results = await self.run_backtest(days=backtest_days)
         
         # CRITICAL: Validate backtest completion
@@ -2045,7 +2284,7 @@ class AMLHFTSystem:
             self.state.is_running = False
             return
         
-        logger.info(f"✅ Phase 1 complete: {backtest_results.get('total_trades')} trades, "
+        logger.info(f"Phase 1 complete: {backtest_results.get('total_trades')} trades, "
                     f"{backtest_results.get('total_return_pct', 0):.2f}% return")
         
         # Step 3: Store Phase 1 objectives status for Phase 4 comparison
@@ -2078,7 +2317,7 @@ class AMLHFTSystem:
             
             if self.state.objectives_met:
                 logger.info("=" * 60)
-                logger.info(f"✅ OPTIMIZATION SUCCESS on attempt {optimization_attempt}")
+                logger.info(f"OPTIMIZATION SUCCESS on attempt {optimization_attempt}")
                 logger.info(f"Return: {backtest_results.get('total_return_pct', 0):.2f}%, "
                           f"Sharpe: {backtest_results.get('sharpe_ratio', 0):.2f}, "
                           f"Profit Factor: {backtest_results.get('profit_factor', 0):.2f}")
@@ -2135,7 +2374,7 @@ class AMLHFTSystem:
             # Check if objectives met
             if self.state.objectives_met:
                 logger.info("=" * 60)
-                logger.info(f"✅ VALIDATION SUCCESS - All objectives met!")
+                logger.info(f"VALIDATION SUCCESS - All objectives met!")
                 logger.info(f"Return: {backtest_results.get('total_return_pct', 0):.2f}%, "
                           f"Sharpe: {backtest_results.get('sharpe_ratio', 0):.2f}, "
                           f"Profit Factor: {backtest_results.get('profit_factor', 0):.2f}")

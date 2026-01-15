@@ -431,7 +431,7 @@ class DataFetcher:
             from hyperliquid.info import Info
             from hyperliquid.utils import constants
         except ImportError:
-            logger.error("❌ hyperliquid-python-sdk not installed: pip install hyperliquid-python-sdk")
+            logger.error("hyperliquid-python-sdk not installed: pip install hyperliquid-python-sdk")
             return pd.DataFrame()
         
         info = Info(constants.MAINNET_API_URL, skip_ws=True)
@@ -455,11 +455,11 @@ class DataFetcher:
                         "is_maker": fill.get('maker', False)
                     })
             
-            logger.info(f"✅ Fetched {len(fills)} wallet fills from {wallet[:10]}... (last {days} days)")
+            logger.info(f"Fetched {len(fills)} wallet fills from {wallet[:10]}... (last {days} days)")
             return pd.DataFrame(fills)
             
         except Exception as e:
-            logger.error(f"❌ Failed to fetch wallet fills: {type(e).__name__}: {e}")
+            logger.error(f"Failed to fetch wallet fills: {type(e).__name__}: {e}")
             return pd.DataFrame()
     
     async def generate_wallet_hybrid_data(
@@ -474,7 +474,7 @@ class DataFetcher:
         wallet_df = await self.fetch_wallet_fills(wallet=wallet, days=days)
         
         if wallet_df.empty or len(wallet_df) < 1000:
-            logger.warning(f"⚠️ Insufficient wallet data ({len(wallet_df)} fills), falling back to SPX hybrid")
+            logger.warning(f"Insufficient wallet data ({len(wallet_df)} fills), falling back to SPX hybrid")
             return await self.generate_hybrid_data(days, real_weight=0.7)
         
         # Supplement with synthetic (10%)
@@ -483,7 +483,7 @@ class DataFetcher:
         # Merge and sort by timestamp
         hybrid = pd.concat([wallet_df, synthetic_df], ignore_index=True).sort_values("timestamp").reset_index(drop=True)
         
-        logger.info(f"💎 Wallet hybrid: {len(wallet_df)} real fills + {len(synthetic_df)} synthetic = {len(hybrid)} total")
+        logger.info(f"Wallet hybrid: {len(wallet_df)} real fills + {len(synthetic_df)} synthetic = {len(hybrid)} total")
         return hybrid
 
     def _add_equity_perp_features(self, df):
@@ -1226,8 +1226,7 @@ class DataFetcher:
     def _add_technical_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Add technical features for ML training.
-        SIMPLIFIED SPEC: Only equity-specific basics - OHLCV, returns, volume, time.
-        NO RSI, MACD, ATR, ADX, Bollinger Bands, or other complex indicators.
+        Pure ML features - no RSI/ATR indicators per SPEC.
         """
         # Basic returns (from price only)
         df["returns"] = df["close"].pct_change()
@@ -1245,11 +1244,11 @@ class DataFetcher:
         df["volume_sma"] = df["volume"].rolling(20).mean()
         df["volume_ratio"] = df["volume"] / df["volume_sma"].clip(lower=1)
         
-        # Simple momentum (price-based only)
+        # Simple momentum (price-based only) - used for force_trade
         df["momentum_5"] = df["close"] / df["close"].shift(5) - 1
         df["momentum_10"] = df["close"] / df["close"].shift(10) - 1
         
-        # Volatility from returns (no ATR)
+        # Volatility from returns (pure price-based, no ATR)
         df["volatility"] = df["returns"].rolling(20).std() * np.sqrt(365 * 24 * 60)
         
         # Equity-specific basics

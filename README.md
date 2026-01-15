@@ -2,7 +2,19 @@
 
 A fully autonomous machine learning trading system for **XYZ100-USDC equity perpetual futures** on HyperLiquid mainnet. Optimized for Apple M4 (24GB RAM) with Metal Performance Shaders (MPS) acceleration.
 
-**Timezone**: Zurich CET | **Last Cleaned**: 2026-01-14
+**Timezone**: Zurich CET | **Last Updated**: 2026-01-15 | **Version**: 2.0
+
+## 🎯 Progressive Objectives System
+
+The system now uses a **3-phase progressive approach** to reliably achieve production targets:
+
+| Phase | Name | Return Target | Sharpe | Profit Factor | Cycles Required |
+|-------|------|---------------|--------|---------------|-----------------|
+| 1 | Foundation | ≥2% | ≥0.5 | ≥0.8 | 3 |
+| 2 | Growth | ≥8% | ≥1.0 | ≥1.0 | 5 |
+| 3 | Production | ≥15% | ≥1.5 | ≥1.3 | 10 |
+
+**All phases enforce Max Drawdown ≤5%**
 
 ## Model Architecture
 
@@ -10,21 +22,20 @@ A fully autonomous machine learning trading system for **XYZ100-USDC equity perp
 |-----------|--------------|
 | **LSTM Encoder** | 2 layers, hidden_size=128 |
 | **DQN Head** | output_size=3 (HOLD/BUY/SELL) |
-| **Features** | OHLCV, volume, returns, time-based only |
-| **Learning Rate** | 0.0001 |
-| **Epsilon Decay** | 0.997 |
-| **Leverage** | 1x (default) |
+| **Features** | OHLCV, volume, returns, ATR, regime |
+| **Learning Rate** | 0.00008 (with cosine annealing) |
+| **Epsilon Decay** | 0.985 |
+| **Training Epochs** | 500 (with early stopping @ 150 patience) |
 
-## Trading Objectives
+## 🔒 Risk Management
 
-| Metric | Target |
-|--------|--------|
-| Monthly Return | ≥15% |
-| Sharpe Ratio | ≥1.5 |
-| Max Drawdown | ≤5% |
-| Take Profit | 0.5% |
-| Stop Loss | 0.25% |
-| Position Size | 40% |
+| Protection | Threshold | Action |
+|------------|-----------|--------|
+| Circuit Breaker | 3.5% DD | Pause trading, close positions |
+| Hard Terminate | 4.5% DD | End backtest, save model |
+| Position Size | 4% per trade | Reduced from 5% |
+| Stop Loss | 0.6% | Tighter protection |
+| Take Profit | 1.8% | Faster profit taking |
 
 ## Project Structure (Cleaned)
 
@@ -69,16 +80,19 @@ AML-100/
 ./scripts/setup_env.sh
 source .venv/bin/activate
 
-# 2. Configure credentials
-cp .env.example .env
-# Edit .env with HYPERLIQUID_WALLET_ADDRESS and HYPERLIQUID_API_SECRET
+# 2. Configure credentials (set environment variables)
+export HYPERLIQUID_WALLET_ADDRESS="0x12045C1Cc410461B24e4293Dd05e2a6c47ebb584"
+export HYPERLIQUID_API_SECRET="your_api_secret_here"
 
-# 3. Run autonomous mode (prevents macOS sleep)
+# 3. Reset model for fresh training (recommended after config changes)
+rm -f models/best_model.pt models/final_model.pt models/.trained_successfully
+
+# 4. Run autonomous mode (Option A: via launch.py with wallet arg)
 caffeinate python scripts/launch.py --mode autonomous --asset XYZ100 \
-    --wallet 0x12045C1Cc410461B24e4293Dd05e2a6c47ebb584
+    --wallet $HYPERLIQUID_WALLET_ADDRESS
 
-# Or use the shell script
-./scripts/run_hft.sh autonomous
+# Or (Option B: direct src/main.py - requires env vars set)
+caffeinate python src/main.py 2>&1 | tee logs/autonomous_$(date +%Y%m%d_%H%M%S).log
 ```
 
 ## Execution Modes

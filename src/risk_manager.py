@@ -134,37 +134,68 @@ class RiskManager:
     async def _check_wallet_balance(self, wallet_address: str) -> Optional[float]:
         """
         SPEC: Check wallet balance using HyperLiquid SDK.
+        Checks HIP-3 XYZ perps clearinghouse balance first, then falls back to main perps.
         Integrates with wallet 0x12045C1Cc410461B24e4293Dd05e2a6c47ebb584.
         """
         try:
-            from hyperliquid.info import Info
-            from hyperliquid.utils import constants
+            import requests
             
-            info = Info(constants.MAINNET_API_URL, skip_ws=True)
-            user_state = info.user_state(wallet_address)
+            # First, check XYZ perps (HIP-3 dex) clearinghouse state
+            xyz_balance = 0.0
+            try:
+                response = requests.post(
+                    "https://api.hyperliquid.xyz/info",
+                    json={
+                        "type": "clearinghouseState",
+                        "user": wallet_address,
+                        "dex": "xyz"  # HIP-3 XYZ dex
+                    },
+                    timeout=10
+                )
+                if response.status_code == 200:
+                    xyz_state = response.json()
+                    if xyz_state and xyz_state.get("marginSummary"):
+                        margin = xyz_state["marginSummary"]
+                        xyz_balance = float(margin.get("accountValue", 0))
+                        if xyz_balance > 0:
+                            logger.info(f"XYZ Perps {wallet_address[:10]}... balance: ${xyz_balance:,.2f}")
+            except Exception as e:
+                logger.debug(f"Could not fetch XYZ dex state: {e}")
             
-            if user_state:
-                margin_summary = user_state.get("marginSummary", {})
-                account_value = float(margin_summary.get("accountValue", 0))
-                available_balance = float(margin_summary.get("totalMarginUsed", 0))
+            # Check main perps clearinghouse balance as fallback
+            main_balance = 0.0
+            try:
+                from hyperliquid.info import Info
+                from hyperliquid.utils import constants
                 
-                logger.info(f"💰 Wallet {wallet_address[:10]}... balance: ${account_value:,.2f}")
-                
-                # Update current capital from actual wallet balance
-                if account_value > 0:
-                    self.current_capital = account_value
-                    self.peak_capital = max(self.peak_capital, account_value)
-                
+                info = Info(constants.MAINNET_API_URL, skip_ws=True)
+                user_state = info.user_state(wallet_address)
+                if user_state:
+                    margin_summary = user_state.get("marginSummary", {})
+                    main_balance = float(margin_summary.get("accountValue", 0))
+                    if main_balance > 0:
+                        logger.debug(f"Main perps balance: ${main_balance:,.2f}")
+            except Exception as e:
+                logger.debug(f"Could not fetch main perps state: {e}")
+            
+            # Use XYZ perps balance if available (preferred for XYZ100 trading)
+            # Otherwise fall back to main perps balance
+            account_value = xyz_balance if xyz_balance > 0 else main_balance
+            
+            if account_value > 0:
+                logger.info(f"Wallet {wallet_address[:10]}... balance: ${account_value:,.2f}")
+                self.current_capital = account_value
+                self.peak_capital = max(self.peak_capital, account_value)
                 return account_value
             else:
-                logger.warning(f"⚠️ Could not fetch wallet state for {wallet_address[:10]}...")
+                logger.warning(f"No balance found for {wallet_address[:10]}... (main=${main_balance:.2f}, xyz=${xyz_balance:.2f})")
                 return None
                 
         except ImportError:
-            logger.warning("⚠️ hyperliquid-python-sdk not installed. Run: pip install hyperliquid-python-sdk")
+            logger.warning("requests not installed")
             return None
         except Exception as e:
-            logger.error(f"❌ Error checking wallet balance: {e}")
+            logger.error(f"Error checking wallet balance: {e}")
             return None
     
     async def _on_fill_event(self, fill_data: Dict[str, Any]) -> None:
@@ -177,7 +208,7 @@ class RiskManager:
                 self.realized_pnl += closed_pnl
                 self._pending_fill_pnl += closed_pnl
                 self._last_fill_time = time.time()
-                logger.info(f"💰 Realized PnL updated: ${closed_pnl:+.2f} (total: ${self.realized_pnl:+.2f})")
+                logger.info(f"Realized PnL updated: ${closed_pnl:+.2f} (total: ${self.realized_pnl:+.2f})")
             
             self.total_fees += fee
             
@@ -545,17 +576,17 @@ class RiskManager:
             for asset in meta['universe']:
                 if asset['name'] == symbol:
                     funding = float(asset.get('funding', 0))
-                    logger.debug(f"💸 Funding {symbol}: {funding*100:.4f}% (8h)")
+                    logger.debug(f"Funding {symbol}: {funding*100:.4f}% (8h)")
                     return funding
             
-            logger.warning(f"⚠️ Symbol {symbol} not found in meta, returning 0")
+            logger.warning(f"Symbol {symbol} not found in meta, returning 0")
             return 0.0
             
         except ImportError:
-            logger.error("❌ hyperliquid-python-sdk not installed for funding checks")
+            logger.error("hyperliquid-python-sdk not installed for funding checks")
             return 0.0
         except Exception as e:
-            logger.error(f"❌ Funding fetch failed: {type(e).__name__}: {e}")
+            logger.error(f"Funding fetch failed: {type(e).__name__}: {e}")
             return 0.0
     
     def should_trade_with_funding(
@@ -653,7 +684,7 @@ class RiskManager:
             # XYZ100: More aggressive reduction in high vol (equity-like behavior)
             if current_volatility > high_vol_threshold:
                 vol_adjustment = high_vol_reduction
-                logger.info(f"⚠️ High vol detected ({current_volatility:.4f} > {high_vol_threshold}), reducing position to {high_vol_reduction*100:.0f}%")
+                logger.info(f"High vol detected ({current_volatility:.4f} > {high_vol_threshold}), reducing position to {high_vol_reduction*100:.0f}%")
             else:
                 vol_adjustment = 0.02 / current_volatility  # Target 2% vol
                 vol_adjustment = max(0.6, min(vol_adjustment, 1.5))  # Step 2: Higher floor (0.6 vs 0.5)
@@ -686,25 +717,41 @@ class RiskManager:
         position_value = self.current_capital * (size_pct / 100)
         position_size = position_value / entry_price
         
-        # Enforce exchange minimum order size (0.001 BTC for Hyperliquid)
-        min_order_size = 0.001
+        # Enforce exchange minimum order size (asset-specific)
+        # XYZ100 is an equity index perp trading in whole units (~$60/unit)
+        # BTC trades in fractions (0.001 minimum)
+        asset = self.params.get("asset", "XYZ100")
+        if "XYZ" in asset.upper():
+            # XYZ100: Equity index perp - trades in whole units (minimum 1 unit)
+            min_order_size = 1.0
+            decimals = 0  # Whole units
+            asset_name = "XYZ100"
+        else:
+            # BTC/crypto: Trades in fractional units (0.001 minimum)
+            min_order_size = 0.001
+            decimals = 4
+            asset_name = "BTC"
+        
         if position_size < min_order_size:
-            # Step 2: Scale up to minimum if we have enough capital (higher threshold: 15%)
+            # Scale up to minimum if we have enough capital (max 15% per trade)
             min_position_value = min_order_size * entry_price
-            if min_position_value <= self.current_capital * 0.15:  # Step 2: Max 15% per trade (was 10%)
+            if min_position_value <= self.current_capital * 0.15:
                 position_size = min_order_size
-                logger.info(f"📈 Position scaled to minimum: {position_size:.4f} BTC (${min_position_value:.2f})")
+                logger.info(f"Position scaled to minimum: {position_size:.{decimals}f} {asset_name} (${min_position_value:.2f})")
             else:
-                logger.warning(f"⚠️ Insufficient capital for min trade: need ${min_position_value:.2f}, have ${self.current_capital:.2f}")
+                logger.warning(f"Insufficient capital for min trade: need ${min_position_value:.2f}, have ${self.current_capital:.2f}")
                 return 0.0
         
-        # Round to appropriate decimals
-        position_size = round(position_size, 4)
+        # Round to appropriate decimals for asset type
+        if decimals == 0:
+            position_size = round(position_size)  # Whole units for XYZ100
+        else:
+            position_size = round(position_size, decimals)
         
         logger.info(
             f"📊 Position sizing: kelly={kelly_pct:.4f}, vol_adj={vol_adjustment:.2f}, "
             f"signal_adj={signal_adjustment:.2f}, risk_adj={risk_adjustment:.2f}, "
-            f"final_size={position_size:.4f} BTC"
+            f"final_size={position_size:.{decimals}f} {asset_name}"
         )
         
         return position_size
@@ -878,7 +925,7 @@ class RiskManager:
         should_exit = self.force_exit_after_timeout and seconds_held >= self.max_hold_seconds
         
         if should_exit:
-            logger.warning(f"⏰ Hold timeout! Position held {seconds_held:.1f}s > max {self.max_hold_seconds}s")
+            logger.warning(f"Hold timeout! Position held {seconds_held:.1f}s > max {self.max_hold_seconds}s")
         
         return should_exit, seconds_held
     
@@ -1004,13 +1051,40 @@ class RiskManager:
         """
         Step 2: Sync capital from exchange account state.
         Pulls actual wallet balance to update PnL tracking.
+        Checks both main perps and XYZ perps (spot) balance.
         """
         try:
-            user_state = await self.api.get_user_state()
+            import requests
             
-            # Get account value (cash + unrealized PnL)
+            # First try to get XYZ perps (HIP-3 dex) balance for XYZ100 trading
+            xyz_balance = 0.0
+            try:
+                wallet = getattr(self.api, 'wallet_address', None)
+                if wallet:
+                    response = requests.post(
+                        "https://api.hyperliquid.xyz/info",
+                        json={
+                            "type": "clearinghouseState",
+                            "user": wallet,
+                            "dex": "xyz"  # HIP-3 XYZ dex
+                        },
+                        timeout=10
+                    )
+                    if response.status_code == 200:
+                        xyz_state = response.json()
+                        if xyz_state and xyz_state.get("marginSummary"):
+                            margin = xyz_state["marginSummary"]
+                            xyz_balance = float(margin.get("accountValue", 0))
+            except Exception as e:
+                logger.debug(f"Could not fetch XYZ dex state: {e}")
+            
+            # Get main perps balance as fallback (uses api which may already have dex set)
+            user_state = await self.api.get_user_state()
             margin_summary = user_state.get("marginSummary", {})
-            account_value = float(margin_summary.get("accountValue", 0))
+            main_balance = float(margin_summary.get("accountValue", 0))
+            
+            # Prefer XYZ perps balance if available
+            account_value = xyz_balance if xyz_balance > 0 else main_balance
             
             if account_value > 0:
                 old_capital = self.current_capital
@@ -1065,13 +1139,41 @@ class RiskManager:
         """
         Optimized PnL sync with minimal API calls.
         Uses caching and batched requests to reduce rate limit hits.
+        Checks HIP-3 XYZ perps clearinghouse balance first.
         """
         try:
-            # SINGLE API call: get_user_state() (cached for 2s)
+            import requests
+            
+            # First check XYZ perps (HIP-3 dex) balance for XYZ100 trading
+            xyz_balance = 0.0
+            try:
+                wallet = getattr(self.api, 'wallet_address', None)
+                if wallet:
+                    response = requests.post(
+                        "https://api.hyperliquid.xyz/info",
+                        json={
+                            "type": "clearinghouseState",
+                            "user": wallet,
+                            "dex": "xyz"  # HIP-3 XYZ dex
+                        },
+                        timeout=10
+                    )
+                    if response.status_code == 200:
+                        xyz_state = response.json()
+                        if xyz_state and xyz_state.get("marginSummary"):
+                            margin = xyz_state["marginSummary"]
+                            xyz_balance = float(margin.get("accountValue", 0))
+            except Exception as e:
+                logger.debug(f"Could not fetch XYZ dex state: {e}")
+            
+            # API call: get_user_state() (uses dex from config if set)
             # This call provides positions AND account value
             state = await self.api.get_user_state()
             margin = state.get('marginSummary', {})
-            account_value = float(margin.get('accountValue', self.current_capital))
+            main_balance = float(margin.get('accountValue', self.current_capital))
+            
+            # Prefer XYZ perps balance if available
+            account_value = xyz_balance if xyz_balance > 0 else main_balance
             
             # Update capital from account value
             if account_value > 0:

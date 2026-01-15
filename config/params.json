@@ -1,45 +1,55 @@
 {
+    "asset": "XYZ100",
     "trading": {
-        "take_profit_pct": 2.103410367339476,
-        "stop_loss_pct": 0.8,
-        "position_size_pct": 5.0,
+        "take_profit_pct": 3.0,
+        "stop_loss_pct": 0.4601865876668157,
+        "position_size_pct": 15.0,
         "leverage": 1,
-        "signal_threshold": 0.0001,
-        "min_q_diff": 0.0005,
-        "max_portfolio_drawdown_pct": 5.0
+        "signal_threshold": 5e-05,
+        "min_q_diff": 0.0003,
+        "max_portfolio_drawdown_pct": 4.5,
+        "max_daily_trades": 50,
+        "min_trade_interval_seconds": 30
     },
     "ml_model": {
         "lstm_hidden_size": 128,
         "lstm_num_layers": 2,
-        "learning_rate": 0.00010493335689495956,
-        "epochs": 300,
-        "epsilon_decay": 0.98,
+        "learning_rate": 5.246667844747977e-05,
+        "epochs": 500,
+        "epsilon_decay": 0.985,
         "epsilon_start": 1.0,
-        "epsilon_min": 0.05,
-        "early_stop_patience": 100,
-        "min_reward_delta": 0.001,
+        "epsilon_min": 0.03,
+        "early_stop_patience": 150,
+        "min_reward_delta": 0.0005,
         "num_workers": 8,
         "enable_torch_compile": false,
         "data_days": 180,
-        "action_balance_penalty": 0.1,
-        "bias_threshold": 0.6,
-        "lr_scheduler_factor": 0.7,
-        "lr_scheduler_patience": 30,
-        "lr_min": 1e-06
+        "action_balance_penalty": 0.15,
+        "bias_threshold": 0.55,
+        "lr_scheduler_factor": 0.5,
+        "lr_scheduler_patience": 40,
+        "lr_min": 5e-07,
+        "gradient_clip_norm": 1.0,
+        "weight_decay": 1e-05
     },
     "backtest": {
         "commission_pct": 0.0005,
-        "slippage_pct": 0.01,
+        "slippage_pct": 0.015,
         "enable_multiprocessing": true,
         "max_workers": 8,
-        "default_days": 180
+        "default_days": 180,
+        "funding_rate_sim": true,
+        "funding_rate_interval_hours": 8,
+        "funding_rate_pct": 0.01
     },
     "reward": {
-        "pnl_scale": 20.0,
-        "streak_bonus": 0.1,
-        "drawdown_penalty": 0.3,
-        "vol_scale_factor": 1.0,
-        "hold_penalty_base": 0.005,
-        "max_consecutive_holds": 30
+        "pnl_scale": 25.0,
+        "streak_bonus": 0.15,
+        "drawdown_penalty": 0.25,
+        "vol_scale_factor": 1.2,
+        "hold_penalty_base": 0.003,
+        "max_consecutive_holds": 20,
+        "win_multiplier": 1.5,
+        "trend_bonus": 0.05
     }
 }

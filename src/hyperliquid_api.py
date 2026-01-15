@@ -105,7 +105,7 @@ class CircuitBreaker:
             if self.failure_count >= self.max_failures:
                 self.state = "open"
                 logger.warning(
-                    f"🔌 Circuit breaker OPEN: {self.failure_count} consecutive failures. "
+                    f"Circuit breaker OPEN: {self.failure_count} consecutive failures. "
                     f"Pausing requests for {self.reset_timeout}s"
                 )
     
@@ -125,7 +125,7 @@ class CircuitBreaker:
             if self.state == "open":
                 if elapsed >= self.reset_timeout:
                     self.state = "half_open"
-                    logger.info("🔌 Circuit breaker HALF-OPEN: Allowing test request")
+                    logger.info("Circuit breaker HALF-OPEN: Allowing test request")
                     return True
                 return False
             
@@ -539,7 +539,7 @@ class HyperliquidAPI:
             if now - self._last_stats_log > 60.0:
                 total_calls = sum(self._api_call_counts.values())
                 top_calls = sorted(self._api_call_counts.items(), key=lambda x: -x[1])[:5]
-                logger.info(f"📊 API call stats (60s): total={total_calls}, top={top_calls}")
+                logger.info(f"API call stats (60s): total={total_calls}, top={top_calls}")
                 self._api_call_counts.clear()
                 self._last_stats_log = now
             
@@ -706,14 +706,19 @@ class HyperliquidAPI:
     async def get_orderbook(self, symbol: str = "BTC") -> Optional[OrderBook]:
         """Get current orderbook snapshot with caching"""
         try:
+            # Extract coin name from symbol (e.g., "xyz:XYZ100" -> "XYZ100")
+            coin = symbol.split(":")[-1] if ":" in symbol else symbol
+            
             cache_key = f"orderbook:{symbol}"
             payload = {
                 "type": "l2Book",
-                "coin": symbol
+                "coin": coin
             }
-            # Add dex parameter for XYZ perps
+            # Add dex parameter for XYZ perps (detected from prefix or config)
             dex = self.config.get("hyperliquid", {}).get("dex")
-            if dex:
+            if symbol.startswith("xyz:") or dex == "xyz":
+                payload["dex"] = "xyz"
+            elif dex:
                 payload["dex"] = dex
             
             data = await self._cached_request(
@@ -755,10 +760,13 @@ class HyperliquidAPI:
         limit: int = 500
     ) -> List[Dict[str, Any]]:
         """Get historical klines/candlesticks"""
+        # Extract coin name from symbol (e.g., "xyz:XYZ100" -> "XYZ100")
+        coin = symbol.split(":")[-1] if ":" in symbol else symbol
+        
         payload = {
             "type": "candleSnapshot",
             "req": {
-                "coin": symbol,
+                "coin": coin,
                 "interval": interval,
                 "startTime": start_time or int((time.time() - 86400) * 1000),
                 "endTime": end_time or int(time.time() * 1000)
@@ -766,7 +774,9 @@ class HyperliquidAPI:
         }
         # Add dex parameter for XYZ perps
         dex = self.config.get("hyperliquid", {}).get("dex")
-        if dex:
+        if symbol.startswith("xyz:") or dex == "xyz":
+            payload["dex"] = "xyz"
+        elif dex:
             payload["dex"] = dex
         
         data = await self._post_request(
@@ -782,13 +792,18 @@ class HyperliquidAPI:
         limit: int = 100
     ) -> List[Dict[str, Any]]:
         """Get recent public trades"""
+        # Extract coin name from symbol (e.g., "xyz:XYZ100" -> "XYZ100")
+        coin = symbol.split(":")[-1] if ":" in symbol else symbol
+        
         payload = {
             "type": "recentTrades",
-            "coin": symbol
+            "coin": coin
         }
         # Add dex parameter for XYZ perps
         dex = self.config.get("hyperliquid", {}).get("dex")
-        if dex:
+        if symbol.startswith("xyz:") or dex == "xyz":
+            payload["dex"] = "xyz"
+        elif dex:
             payload["dex"] = dex
         
         result = await self._post_request(
@@ -799,14 +814,19 @@ class HyperliquidAPI:
     
     async def get_funding_rate(self, symbol: str = "BTC") -> Dict[str, Any]:
         """Get current funding rate"""
+        # Extract coin name from symbol (e.g., "xyz:XYZ100" -> "XYZ100")
+        coin = symbol.split(":")[-1] if ":" in symbol else symbol
+        
         payload = {
             "type": "fundingHistory",
-            "coin": symbol,
+            "coin": coin,
             "startTime": int((time.time() - 3600) * 1000)
         }
         # Add dex parameter for XYZ perps
         dex = self.config.get("hyperliquid", {}).get("dex")
-        if dex:
+        if symbol.startswith("xyz:") or dex == "xyz":
+            payload["dex"] = "xyz"
+        elif dex:
             payload["dex"] = dex
         
         return await self._post_request(
@@ -976,7 +996,7 @@ class HyperliquidAPI:
                             }
                     
                     # Order not found in fills or open - may be canceled
-                    logger.warning(f"⚠️ Order {order_id} not found in open or fills - may be canceled")
+                    logger.warning(f"Order {order_id} not found in open or fills - may be canceled")
                     return {"filled": False, "status": "unknown"}
                 
                 await asyncio.sleep(poll_interval)
@@ -985,7 +1005,7 @@ class HyperliquidAPI:
                 logger.error(f"Error verifying order {order_id}: {e}")
                 await asyncio.sleep(poll_interval)
         
-        logger.warning(f"⏰ Order {order_id} verification timeout after {timeout}s")
+        logger.warning(f"Order {order_id} verification timeout after {timeout}s")
         return {"filled": False, "status": "timeout"}
     
     def is_mainnet(self) -> bool:
@@ -1003,7 +1023,7 @@ class HyperliquidAPI:
                 "Trades will not affect real wallet."
             )
         else:
-            logger.info("✅ Connected to Hyperliquid MAINNET")
+            logger.info("Connected to Hyperliquid MAINNET")
     
     async def place_order(
         self,
@@ -1076,7 +1096,7 @@ class HyperliquidAPI:
                     order_id = str(statuses[0]["resting"]["oid"])
                 elif "filled" in statuses[0]:
                     order_id = str(statuses[0]["filled"]["oid"])
-                    logger.info(f"✅ Order immediately FILLED: {side} {size} {symbol} @ {price}")
+                    logger.info(f"Order immediately FILLED: {side} {size} {symbol} @ {price}")
         
         # Step 2: Log order placement with mainnet confirmation
         network = "MAINNET" if self.is_mainnet() else "TESTNET"
@@ -1090,9 +1110,9 @@ class HyperliquidAPI:
             fill_result = await self.verify_order_filled(order_id, timeout=5.0)
             result["fill_verification"] = fill_result
             if fill_result.get("filled"):
-                logger.info(f"✅ Fill confirmed: order {order_id}")
+                logger.info(f"Fill confirmed: order {order_id}")
             else:
-                logger.warning(f"⚠️ Fill not confirmed for order {order_id}: {fill_result.get('status')}")
+                logger.warning(f"Fill not confirmed for order {order_id}: {fill_result.get('status')}")
         
         result["order_id"] = order_id
         return result
@@ -1533,11 +1553,11 @@ class HyperliquidAPI:
             
             # Log fill confirmation
             side_str = "BUY" if side == "B" else "SELL"
-            logger.info(f"✅ Fill confirmed: {side_str} {size} {symbol} @ ${price:,.2f} (fee: ${fee:.4f})")
+            logger.info(f"Fill confirmed: {side_str} {size} {symbol} @ ${price:,.2f} (fee: ${fee:.4f})")
             
             if closed_pnl != 0:
                 self._total_realized_pnl += closed_pnl
-                logger.info(f"💰 Realized PnL: ${closed_pnl:+.2f} (cumulative: ${self._total_realized_pnl:+.2f})")
+                logger.info(f"Realized PnL: ${closed_pnl:+.2f} (cumulative: ${self._total_realized_pnl:+.2f})")
             
             # Trigger fill callbacks
             for callback in self._fill_callbacks:

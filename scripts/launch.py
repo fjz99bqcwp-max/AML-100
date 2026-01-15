@@ -22,64 +22,182 @@ sys.path.insert(0, str(PROJECT_ROOT))
 # Zurich CET timezone (UTC+1, UTC+2 in summer)
 CET = timezone(timedelta(hours=1))
 
-# ANSI Colors
+# ANSI Colors - Optimized for dark terminal themes
 class Colors:
     RESET = "\033[0m"
     BOLD = "\033[1m"
     DIM = "\033[2m"
-    RED = "\033[91m"
-    GREEN = "\033[92m"
-    YELLOW = "\033[93m"
-    BLUE = "\033[94m"
-    MAGENTA = "\033[95m"
-    CYAN = "\033[96m"
+    
+    # Dark-theme optimized - brighter, more visible colors
+    RED = "\033[38;5;203m"        # Soft red (not too harsh)
+    GREEN = "\033[38;5;114m"      # Soft green
+    YELLOW = "\033[38;5;221m"     # Warm yellow
+    BLUE = "\033[38;5;111m"       # Bright blue
+    MAGENTA = "\033[38;5;176m"    # Soft magenta
+    CYAN = "\033[38;5;80m"        # Teal cyan
+    ORANGE = "\033[38;5;215m"     # Orange for force trades
+    GRAY = "\033[38;5;245m"       # Dim gray for timestamps
+    WHITE = "\033[38;5;255m"      # Bright white for important
 
 
 def get_cet_timestamp() -> str:
-    """Get current timestamp in Zurich CET"""
-    return datetime.now(CET).strftime("%Y-%m-%d %H:%M:%S CET")
+    """Get current timestamp in Zurich CET (time-only for cleaner logs)"""
+    return datetime.now(CET).strftime("%H:%M:%S")
 
 
-def log_info(msg: str, icon: str = "ℹ️") -> None:
-    print(f"{Colors.DIM}[{get_cet_timestamp()}]{Colors.RESET} {icon} {Colors.CYAN}{msg}{Colors.RESET}")
+def log_info(msg: str) -> None:
+    """Log info message with dark-theme optimized format"""
+    print(f"{Colors.GRAY}[{get_cet_timestamp()}]{Colors.RESET} {Colors.CYAN}[INFO]{Colors.RESET} {Colors.DIM}{'launch':10}{Colors.RESET} {Colors.CYAN}{msg}{Colors.RESET}")
 
 
-def log_success(msg: str, icon: str = "✓") -> None:
-    print(f"{Colors.DIM}[{get_cet_timestamp()}]{Colors.RESET} {Colors.GREEN}{icon} {msg}{Colors.RESET}")
+def log_success(msg: str) -> None:
+    """Log success message with dark-theme optimized format"""
+    print(f"{Colors.GRAY}[{get_cet_timestamp()}]{Colors.RESET} {Colors.GREEN}[INFO]{Colors.RESET} {Colors.DIM}{'launch':10}{Colors.RESET} {Colors.GREEN}{msg}{Colors.RESET}")
 
 
-def log_warning(msg: str, icon: str = "⚠") -> None:
-    print(f"{Colors.DIM}[{get_cet_timestamp()}]{Colors.RESET} {Colors.YELLOW}{icon} {msg}{Colors.RESET}")
+def log_warning(msg: str) -> None:
+    """Log warning message with dark-theme optimized format"""
+    print(f"{Colors.GRAY}[{get_cet_timestamp()}]{Colors.RESET} {Colors.YELLOW}[WARN]{Colors.RESET} {Colors.DIM}{'launch':10}{Colors.RESET} {Colors.YELLOW}{msg}{Colors.RESET}")
 
 
-def log_error(msg: str, icon: str = "✗") -> None:
-    print(f"{Colors.DIM}[{get_cet_timestamp()}]{Colors.RESET} {Colors.RED}{icon} {msg}{Colors.RESET}")
+def log_error(msg: str) -> None:
+    """Log error message with dark-theme optimized format"""
+    print(f"{Colors.GRAY}[{get_cet_timestamp()}]{Colors.RESET} {Colors.RED}[ERR!]{Colors.RESET} {Colors.DIM}{'launch':10}{Colors.RESET} {Colors.RED}{msg}{Colors.RESET}")
 
 
 def log_phase(num: int, name: str) -> None:
-    print(f"\n{Colors.DIM}[{get_cet_timestamp()}]{Colors.RESET} {Colors.BOLD}{Colors.MAGENTA}━━━ Phase {num}: {name} ━━━{Colors.RESET}")
+    """Log phase transition with dark-theme optimized format"""
+    print(f"\n{Colors.GRAY}[{get_cet_timestamp()}]{Colors.RESET} {Colors.BOLD}{Colors.MAGENTA}--- Phase {num}: {name} ---{Colors.RESET}")
+
+
+class CETFormatter(logging.Formatter):
+    """Custom formatter with CET timezone and dark-theme optimized colors"""
+    
+    LEVEL_COLORS = {
+        'DEBUG': Colors.GRAY,
+        'INFO': Colors.CYAN,
+        'WARNING': Colors.YELLOW,
+        'ERROR': Colors.RED,
+        'CRITICAL': Colors.RED + Colors.BOLD,
+    }
+    
+    LEVEL_TAGS = {
+        'DEBUG': 'DBUG',
+        'INFO': 'INFO',
+        'WARNING': 'WARN',
+        'ERROR': 'ERR!',
+        'CRITICAL': 'CRIT',
+    }
+    
+    def format(self, record):
+        # Get CET timestamp
+        ct = datetime.fromtimestamp(record.created, tz=CET)
+        timestamp = ct.strftime("%H:%M:%S")  # Shorter time-only format
+        
+        # Get color and tag for level
+        level_color = self.LEVEL_COLORS.get(record.levelname, Colors.RESET)
+        level_tag = self.LEVEL_TAGS.get(record.levelname, 'INFO')
+        
+        # Shorten module name
+        module = record.name
+        if module.startswith('src.'):
+            module = module[4:]  # Remove 'src.' prefix
+        module = module[:10].ljust(10)  # Fixed width, shorter
+        
+        # Format message - strip icons for cleaner output
+        msg = record.getMessage()
+        
+        # Context-aware message coloring for dark theme
+        msg_color = Colors.RESET
+        if 'executed' in msg.lower() or 'success' in msg.lower():
+            msg_color = Colors.GREEN
+        elif 'FORCE' in msg:
+            msg_color = Colors.ORANGE
+        elif 'cycle' in msg.lower():
+            msg_color = Colors.CYAN
+        elif 'BUY' in msg or 'SELL' in msg:
+            msg_color = Colors.BLUE
+        elif 'skip' in msg.lower():
+            msg_color = Colors.YELLOW
+        elif 'HOLD' in msg:
+            msg_color = Colors.GRAY
+        elif 'halted' in msg.lower() or 'stop' in msg.lower() or 'error' in msg.lower():
+            msg_color = Colors.RED
+        elif 'profit' in msg.lower() or 'PnL' in msg:
+            msg_color = Colors.GREEN if '+' in msg else Colors.RED if '-' in msg else msg_color
+        
+        # Console output: [time] [LEVEL] module  message
+        formatted = f"{Colors.GRAY}[{timestamp}]{Colors.RESET} {level_color}[{level_tag}]{Colors.RESET} {Colors.DIM}{module}{Colors.RESET} {msg_color}{msg}{Colors.RESET}"
+        
+        return formatted
+
+
+class FileFormatter(logging.Formatter):
+    """Plain formatter for file output with CET timezone - no icons, clean text"""
+    
+    # Unicode icons to strip from log messages
+    ICONS_TO_STRIP = [
+        '✅', '❌', '⚠️', '🔄', '📈', '📉', '🚦', '🟡', '🟢', '🔴',
+        '💀', '🔌', '⏩', '🎯', '💰', '📊', 'ℹ️', '✓', '✗', '⚠',
+        '│', '·', '━', '▶', '◀', '●', '○', '◉', '◎', '★', '☆',
+        '🔒', '⏱️', '🔋', '💡', '🚀', '⚡', '🎲', '🔧', '📝', '🔍'
+    ]
+    
+    LEVEL_TAGS = {
+        'DEBUG': 'DBUG',
+        'INFO': 'INFO',
+        'WARNING': 'WARN',
+        'ERROR': 'ERR!',
+        'CRITICAL': 'CRIT',
+    }
+    
+    def format(self, record):
+        ct = datetime.fromtimestamp(record.created, tz=CET)
+        timestamp = ct.strftime("%Y-%m-%d %H:%M:%S")
+        
+        module = record.name
+        if module.startswith('src.'):
+            module = module[4:]
+        module = module[:12].ljust(12)
+        
+        level = self.LEVEL_TAGS.get(record.levelname, 'INFO')
+        msg = record.getMessage()
+        
+        # Strip all icons from file log output
+        for icon in self.ICONS_TO_STRIP:
+            msg = msg.replace(icon, '')
+        
+        # Clean up extra whitespace from icon removal
+        msg = ' '.join(msg.split())
+        
+        return f"[{timestamp}] [{level}] {module} {msg}"
 
 
 def setup_logging(level: str = "INFO") -> None:
-    """Configure logging with file output"""
+    """Configure logging with CET timezone and colored output"""
     log_dir = PROJECT_ROOT / "logs"
     log_dir.mkdir(exist_ok=True)
     
     timestamp = datetime.now(CET).strftime("%Y%m%d_%H%M%S")
     log_file = log_dir / f"aml100_{timestamp}.log"
     
-    logging.basicConfig(
-        level=getattr(logging, level.upper()),
-        format="%(asctime)s | %(levelname)-8s | %(name)-20s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler(log_file)
-        ]
-    )
+    # Clear existing handlers
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(getattr(logging, level.upper()))
     
-    # Reduce noise
-    for lib in ["websockets", "asyncio", "urllib3", "optuna"]:
+    # Console handler with colors
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(CETFormatter())
+    root_logger.addHandler(console_handler)
+    
+    # File handler without colors
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setFormatter(FileFormatter())
+    root_logger.addHandler(file_handler)
+    
+    # Reduce noise from libraries
+    for lib in ["websockets", "asyncio", "urllib3", "optuna", "httpx", "httpcore"]:
         logging.getLogger(lib).setLevel(logging.WARNING)
 
 
@@ -97,7 +215,7 @@ def load_env() -> None:
 
 def reset_to_defaults() -> None:
     """Reset params.json and objectives.json to SPEC defaults"""
-    log_info("🔒 Resetting to SPEC defaults...")
+    log_info("Resetting to SPEC defaults...")
     
     # SPEC defaults for params.json
     params = {
@@ -215,8 +333,8 @@ async def run_backtest(days: int = 180, data_source: str = "hybrid") -> dict:
         
         obj_met = results.get('objectives_met', False)
         obj_color = Colors.GREEN if obj_met else Colors.RED
-        print(f"  Objectives Met:  {obj_color}{'✓ YES' if obj_met else '✗ NO':>8}{Colors.RESET}")
-        print(f"{Colors.BOLD}{Colors.CYAN}{'═' * 50}{Colors.RESET}\n")
+        print(f"  Objectives Met:  {obj_color}{'YES' if obj_met else 'NO':>8}{Colors.RESET}")
+        print(f"{Colors.BOLD}{Colors.CYAN}{'=' * 50}{Colors.RESET}\n")
         
         return results
     finally:
@@ -291,17 +409,19 @@ async def run_live(wallet: str) -> None:
         await system.shutdown()
 
 
-async def run_autonomous(asset: str, wallet: str, cycle_hours: int = 1) -> None:
+async def run_autonomous(asset: str, wallet: str, cycle_hours: int = 1, skip_backtest: bool = False) -> None:
     """
     Full autonomous mode: backtest → optimize → train → validate → live
     Loops hourly with automatic parameter adjustment
     """
     from src.main import AMLHFTSystem
     
-    log_info(f"🤖 Starting AUTONOMOUS MODE for {asset}")
+    log_info(f"Starting AUTONOMOUS MODE for {asset}")
     log_info(f"   Wallet: {wallet}")
     log_info(f"   Cycle: Every {cycle_hours} hour(s)")
     log_info(f"   Timezone: Zurich CET")
+    if skip_backtest:
+        log_info(f"   Skip Backtest: Enabled - going directly to live trading")
     
     cycle = 0
     running = True
@@ -323,28 +443,33 @@ async def run_autonomous(asset: str, wallet: str, cycle_hours: int = 1) -> None:
         print(f"{Colors.BOLD}{Colors.BLUE}{'═' * 60}{Colors.RESET}\n")
         
         try:
-            # Phase 1: Backtest with hybrid data
-            backtest_results = await run_backtest(days=180, data_source="hybrid")
-            
-            objectives_met = backtest_results.get('objectives_met', False)
-            sharpe = backtest_results.get('sharpe_ratio', 0)
-            drawdown = backtest_results.get('max_drawdown_pct', 100)
-            
-            if not objectives_met:
-                log_warning(f"Objectives not met (Sharpe={sharpe:.2f}, DD={drawdown:.2f}%)")
+            # Check if skipping backtest
+            if skip_backtest:
+                log_info("Skipping backtest - proceeding to live trading")
+                objectives_met = True
+            else:
+                # Phase 1: Backtest with hybrid data
+                backtest_results = await run_backtest(days=180, data_source="hybrid")
                 
-                # Phase 2: Optimize parameters
-                await run_optimization(n_trials=30)
+                objectives_met = backtest_results.get('objectives_met', False)
+                sharpe = backtest_results.get('sharpe_ratio', 0)
+                drawdown = backtest_results.get('max_drawdown_pct', 100)
                 
-                # Phase 3: Retrain model
-                await run_training(days=180, epochs=180)
-                
-                # Phase 4: Validate
-                validation = await run_validation(days=30)
-                objectives_met = validation.get('objectives_met', False)
+                if not objectives_met:
+                    log_warning(f"Objectives not met (Sharpe={sharpe:.2f}, DD={drawdown:.2f}%)")
+                    
+                    # Phase 2: Optimize parameters
+                    await run_optimization(n_trials=30)
+                    
+                    # Phase 3: Retrain model
+                    await run_training(days=180, epochs=180)
+                    
+                    # Phase 4: Validate
+                    validation = await run_validation(days=30)
+                    objectives_met = validation.get('objectives_met', False)
             
             if objectives_met:
-                log_success("🎯 Objectives met! Starting live trading...")
+                log_success("Objectives met! Starting live trading...")
                 
                 # Phase 5: Live trading (runs for cycle_hours)
                 system = AMLHFTSystem()
@@ -401,6 +526,8 @@ Examples:
                         help="Hours per autonomous cycle (default: 1)")
     parser.add_argument("--reset-defaults", action="store_true",
                         help="Reset to SPEC defaults before running")
+    parser.add_argument("--skip-backtest", action="store_true",
+                        help="Skip backtest and go directly to live trading")
     parser.add_argument("--log-level", type=str, default="INFO",
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
                         help="Logging level")
@@ -440,7 +567,12 @@ Examples:
         elif args.mode == "live":
             asyncio.run(run_live(wallet=args.wallet))
         elif args.mode == "autonomous":
-            asyncio.run(run_autonomous(asset=args.asset, wallet=args.wallet, cycle_hours=args.cycle_hours))
+            asyncio.run(run_autonomous(
+                asset=args.asset, 
+                wallet=args.wallet, 
+                cycle_hours=args.cycle_hours,
+                skip_backtest=args.skip_backtest
+            ))
             
     except KeyboardInterrupt:
         log_warning("Interrupted by user")

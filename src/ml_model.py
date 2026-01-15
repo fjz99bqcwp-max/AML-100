@@ -476,7 +476,7 @@ class MLModel:
         # Determine device (prefer MPS on M4 Mac)
         if torch.backends.mps.is_available():
             self.device = torch.device("mps")
-            logger.info("🍎 Using MPS (Metal Performance Shaders) for M4 acceleration")
+            logger.info("Using MPS (Metal Performance Shaders) for M4 acceleration")
         elif torch.cuda.is_available():
             self.device = torch.device("cuda")
             logger.info("Using CUDA for acceleration")
@@ -558,7 +558,7 @@ class MLModel:
         # Metrics
         self.training_history: List[TrainingMetrics] = []
         
-        logger.info(f"🔒 MLModel initialized with SPEC defaults: LSTM(2x128)+DQN(3), lr={self.SPEC_DEFAULTS['learning_rate']}, epsilon_decay={self.SPEC_DEFAULTS['epsilon_decay']}")
+        logger.info(f"MLModel initialized with SPEC defaults: LSTM(2x128)+DQN(3), lr={self.SPEC_DEFAULTS['learning_rate']}, epsilon_decay={self.SPEC_DEFAULTS['epsilon_decay']}")
     
     def _apply_spec_defaults(self) -> None:
         """Apply SPEC defaults to ml_config, overriding any custom values."""
@@ -583,7 +583,7 @@ class MLModel:
         dqn_hidden = 256    # DQN hidden layer size
         num_actions = 3     # Spec: HOLD, BUY, SELL only
         
-        logger.info(f"🔒 Initializing STRICT LSTM+DQN: LSTM({lstm_layers}x{lstm_hidden}) + DQN({num_actions} actions)")
+        logger.info(f"Initializing STRICT LSTM+DQN: LSTM({lstm_layers}x{lstm_hidden}) + DQN({num_actions} actions)")
         
         self.model = HybridLSTMDQN(
             input_size=input_size,
@@ -599,11 +599,11 @@ class MLModel:
             if hasattr(torch, 'compile'):
                 try:
                     self.model = torch.compile(self.model, mode="reduce-overhead")
-                    logger.info("🚀 torch.compile() enabled - M4 MPS optimized for <0.5ms inference")
+                    logger.info("torch.compile() enabled - M4 MPS optimized for <0.5ms inference")
                 except Exception as e:
-                    logger.warning(f"⚠️ torch.compile() failed: {e}, using eager mode")
+                    logger.warning(f"torch.compile() failed: {e}, using eager mode")
             else:
-                logger.warning("⚠️ torch.compile() not available (requires PyTorch >=2.0)")
+                logger.warning("torch.compile() not available (requires PyTorch >=2.0)")
         
         # Target network for stable Q-learning (same spec architecture)
         self.target_model = HybridLSTMDQN(
@@ -649,7 +649,7 @@ class MLModel:
         self.reward_threshold_stop = self.ml_config.get("reward_threshold_stop", -0.3)
         self.reward_threshold_epochs = self.ml_config.get("reward_threshold_epochs", 20)
         
-        logger.info(f"✅ Model initialized: input_size={input_size}, LSTM=2x128, DQN=3 actions, lr={spec_lr}")
+        logger.info(f"Model initialized: input_size={input_size}, LSTM=2x128, DQN=3 actions, lr={spec_lr}")
     
     def initialize_a2c_model(self, input_size: int) -> None:
         """
@@ -831,85 +831,133 @@ class MLModel:
         daily_vol: float = 0.01
     ) -> float:
         """
-        SIMPLIFIED PnL-focused reward function.
+        ENHANCED PnL-focused reward with asymmetric scaling.
         
-        CRITICAL PRINCIPLE: The reward MUST directly reflect actual trading PnL.
-        - Correct direction = positive reward proportional to price move
-        - Wrong direction = negative reward proportional to price move
-        - HOLD = small penalty (opportunity cost) or neutral
+        KEY IMPROVEMENTS:
+        1. Asymmetric rewards: Winning trades get 1.5x reward vs losses
+        2. Trend following bonus: Extra reward for riding trends
+        3. Risk-adjusted: Larger positions in low-vol, smaller in high-vol
+        4. Win streak bonuses: Encourage consistent profitability
         
         Args:
             action: 0=HOLD, 1=BUY, 2=SELL
             price_change_pct: (future_price - current_price) / current_price
             atr_normalized: ATR / price for volatility normalization
-            prev_action: Previous action (unused in simplified version)
-            status: Training status (unused in simplified version)
-            daily_vol: Daily volatility (unused in simplified version)
+            prev_action: Previous action for trend detection
+            status: Training status
+            daily_vol: Daily volatility for risk adjustment
         
         Returns:
-            Reward value directly proportional to trading PnL
+            Reward value directly proportional to risk-adjusted trading PnL
         """
         cfg = self.reward_config
         
-        # Reset consecutive holds tracker
+        # Initialize tracking attributes
         if not hasattr(self, '_consecutive_holds'):
             self._consecutive_holds = 0
+        if not hasattr(self, '_win_streak'):
+            self._win_streak = 0
+        if not hasattr(self, '_trend_direction'):
+            self._trend_direction = 0  # +1 = uptrend, -1 = downtrend
         
-        # CORE LOGIC: Reward = Actual PnL from the action
+        # Volatility-adjusted PnL scaling (trade smaller in high vol)
+        vol_factor = max(0.5, min(2.0, 0.02 / max(daily_vol, 0.005)))
+        effective_pnl_scale = cfg.pnl_scale * vol_factor
+        
+        # Asymmetric reward multipliers (wins worth more than losses)
+        WIN_MULTIPLIER = 1.5
+        LOSS_MULTIPLIER = 1.0
+        
+        # CORE LOGIC: Reward = Risk-adjusted PnL from the action
         if action == self.HOLD:
-            # HOLD is GOOD when price barely moves (trading would just incur commission)
             self._consecutive_holds += 1
             
-            # If price move is smaller than commission, HOLD was correct!
+            # HOLD is GOOD when price barely moves
             if abs(price_change_pct) < cfg.commission_rate * 2:
-                # Positive reward for correctly not trading
-                base_reward = 0.05  # Small positive for good decision
+                base_reward = 0.08  # Slightly higher for smart holds
+                if self._consecutive_holds <= 2:
+                    base_reward += 0.02  # Bonus for brief holds
             else:
-                # Missed opportunity cost - proportional to missed move
+                # Opportunity cost - but capped to prevent over-penalization
                 missed_pnl = abs(price_change_pct) - cfg.commission_rate
-                hold_penalty = cfg.hold_penalty * min(self._consecutive_holds, 5)
-                base_reward = -(hold_penalty + missed_pnl * cfg.pnl_scale * 0.1)  # Mild penalty
+                hold_penalty = cfg.hold_penalty * min(self._consecutive_holds, 3)  # Cap at 3
+                base_reward = -(hold_penalty + missed_pnl * effective_pnl_scale * 0.05)  # Reduced penalty
+                base_reward = max(base_reward, -0.15)  # Floor on HOLD penalty
+            
+            # Reset win streak on excessive holding
+            if self._consecutive_holds > 5:
+                self._win_streak = max(0, self._win_streak - 1)
             
         elif action == self.BUY:
-            # BUY profits when price goes UP
             self._consecutive_holds = 0
             
-            # Direct PnL: positive price change = profit, negative = loss
-            pnl = price_change_pct - cfg.commission_rate
+            # Direct PnL: positive price change = profit
+            raw_pnl = price_change_pct - cfg.commission_rate
             
-            # Scale by pnl_scale to make the signal stronger
-            base_reward = pnl * cfg.pnl_scale
+            if raw_pnl > 0:
+                # WINNING TRADE - apply win multiplier
+                base_reward = raw_pnl * effective_pnl_scale * WIN_MULTIPLIER
+                self._win_streak += 1
+                self._trend_direction = 1
+                
+                # Win streak bonus (compounding encouragement)
+                streak_bonus = min(0.1 * self._win_streak, 0.3)
+                base_reward += streak_bonus
+                
+            else:
+                # LOSING TRADE - standard penalty
+                base_reward = raw_pnl * effective_pnl_scale * LOSS_MULTIPLIER
+                self._win_streak = 0
+                
+                # Extra drawdown penalty for significant losses
+                if price_change_pct < -0.005:  # >0.5% loss
+                    base_reward -= cfg.drawdown_penalty * abs(price_change_pct) * effective_pnl_scale * 0.5
             
-            # Additional penalty for wrong direction (going long when price drops)
-            if price_change_pct < -0.001:  # Significant drop
-                base_reward -= cfg.drawdown_penalty * abs(price_change_pct) * cfg.pnl_scale
+            # Trend following bonus: continuing in trend direction
+            if prev_action == self.BUY and self._trend_direction == 1 and price_change_pct > 0:
+                base_reward += 0.05  # Trend continuation bonus
             
         else:  # SELL
-            # SELL profits when price goes DOWN
             self._consecutive_holds = 0
             
             # Direct PnL: negative price change = profit for short
-            pnl = -price_change_pct - cfg.commission_rate
+            raw_pnl = -price_change_pct - cfg.commission_rate
             
-            # Scale by pnl_scale
-            base_reward = pnl * cfg.pnl_scale
+            if raw_pnl > 0:
+                # WINNING TRADE - apply win multiplier
+                base_reward = raw_pnl * effective_pnl_scale * WIN_MULTIPLIER
+                self._win_streak += 1
+                self._trend_direction = -1
+                
+                # Win streak bonus
+                streak_bonus = min(0.1 * self._win_streak, 0.3)
+                base_reward += streak_bonus
+                
+            else:
+                # LOSING TRADE - standard penalty
+                base_reward = raw_pnl * effective_pnl_scale * LOSS_MULTIPLIER
+                self._win_streak = 0
+                
+                # Extra drawdown penalty for significant losses
+                if price_change_pct > 0.005:  # >0.5% rise against short
+                    base_reward -= cfg.drawdown_penalty * abs(price_change_pct) * effective_pnl_scale * 0.5
             
-            # Additional penalty for wrong direction (going short when price rises)
-            if price_change_pct > 0.001:  # Significant rise
-                base_reward -= cfg.drawdown_penalty * abs(price_change_pct) * cfg.pnl_scale
+            # Trend following bonus
+            if prev_action == self.SELL and self._trend_direction == -1 and price_change_pct < 0:
+                base_reward += 0.05  # Trend continuation bonus
         
-        # Small direction bonus (supplementary, not dominant)
+        # Direction accuracy bonus (supplementary)
         direction_bonus = 0.0
-        if action == self.BUY and price_change_pct > 0.0005:
+        if action == self.BUY and price_change_pct > 0.001:
             direction_bonus = cfg.correct_direction_bonus
-        elif action == self.SELL and price_change_pct < -0.0005:
+        elif action == self.SELL and price_change_pct < -0.001:
             direction_bonus = cfg.correct_direction_bonus
         
-        # Combine: PnL is dominant, direction bonus is small supplement
+        # Combine rewards
         total_reward = base_reward + direction_bonus
         
-        # Clip to reasonable range
-        total_reward = np.clip(total_reward, cfg.min_trade_reward, cfg.max_trade_reward)
+        # Wider clip range to allow stronger learning signals
+        total_reward = np.clip(total_reward, cfg.min_trade_reward, cfg.max_trade_reward * 1.5)
         
         # Track for Sharpe calculation
         self.recent_rewards.append(total_reward)
@@ -1079,7 +1127,7 @@ class MLModel:
             if hold_pct > 0.90:  # Very high threshold
                 hold_penalty = -self.reward_config.diversity_penalty * 5 * total_actions  # Reduced 12x -> 5x
                 rewards = rewards + (hold_penalty / len(rewards))
-                logger.warning(f"⚠️ Extreme HOLD dominance: {hold_pct:.1%} HOLD")
+                logger.warning(f"Extreme HOLD dominance: {hold_pct:.1%} HOLD")
             
             # Only penalize very extreme action bias (>90%)
             if max_action_pct > 0.90:
@@ -1134,7 +1182,7 @@ class MLModel:
                 try:
                     self._train_batch(batch_size, optimal_q, effective_gamma)
                 except Exception as e:
-                    logger.error(f"❌ _train_batch failed at batch {batch_idx}: {e}")
+                    logger.error(f"_train_batch failed at batch {batch_idx}: {e}")
                     logger.error(f"   replay_buffer size: {len(self.replay_buffer)}")
                     logger.error(f"   batch_size: {batch_size}")
                     logger.error(f"   model.training: {self.model.training if self.model else 'N/A'}")
@@ -1190,11 +1238,11 @@ class MLModel:
         params_with_grad = sum(1 for p in self.model.parameters() if p.requires_grad)
         total_params = sum(1 for p in self.model.parameters())
         if params_with_grad != total_params:
-            logger.error(f"❌ Model param issue: {params_with_grad}/{total_params} require grad")
+            logger.error(f"Model param issue: {params_with_grad}/{total_params} require grad")
         
         # Debug: Check torch.is_grad_enabled()
         if not torch.is_grad_enabled():
-            logger.error("❌ torch.is_grad_enabled() is False!")
+            logger.error("torch.is_grad_enabled() is False!")
         
         # Forward pass with optional AMP (disabled on MPS)
         # Note: autocast is CUDA-only, we skip it for MPS
@@ -1265,7 +1313,7 @@ class MLModel:
         
         # Debug: Check loss requires grad before backward
         if not loss.requires_grad:
-            logger.error(f"❌ Loss does not require grad!")
+            logger.error(f"Loss does not require grad!")
             logger.error(f"   loss.requires_grad={loss.requires_grad}")
             logger.error(f"   td_loss.requires_grad={td_loss.requires_grad}")
             logger.error(f"   current_q.requires_grad={current_q.requires_grad}")
@@ -2463,15 +2511,19 @@ class BacktestEnvironment:
                 reward = self._close_position(current_price, "stop_loss")
         
         # Calculate current equity for drawdown check
+        # Note: capital has notional subtracted at entry, so we add notional + unrealized to get total equity
         current_equity = self.capital
         if self.position > 0 and self.entry_price > 0:
             notional_in_pos = float(self.position) * float(self.entry_price)
-            if self.position_side == 1:
+            if self.position_side == 1:  # Long
                 unrealized_pnl = float(self.position) * (float(current_price) - float(self.entry_price))
-            else:
+            else:  # Short
                 unrealized_pnl = float(self.position) * (float(self.entry_price) - float(current_price))
             if np.isfinite(notional_in_pos) and np.isfinite(unrealized_pnl):
                 current_equity = self.capital + notional_in_pos + unrealized_pnl
+        
+        # Sanity check on equity value
+        current_equity = max(1.0, min(current_equity, self.MAX_CAPITAL_ABSOLUTE))
         
         # Update peak equity (high water mark) - only if not permanently halted
         if current_equity > self.peak_equity and not self.permanently_halted:
@@ -2491,6 +2543,8 @@ class BacktestEnvironment:
         if current_dd_pct >= self.HARD_TERMINATE_DD_PCT:
             self.permanently_halted = True
             self.drawdown_halt = True
+            logger.warning(f"🛑 BACKTEST HARD TERMINATION: DD={current_dd_pct:.2f}% >= {self.HARD_TERMINATE_DD_PCT}%")
+            logger.warning(f"   Peak=${self.peak_equity:.2f}, Current=${current_equity:.2f}")
             # Force-close any open position immediately
             if self.position > 0:
                 reward = self._close_position(current_price, "hard_termination")
@@ -2505,6 +2559,7 @@ class BacktestEnvironment:
             self.recovery_target = self.peak_equity * (1 - self.CIRCUIT_BREAKER_DD_PCT / 100 * 0.5)  # Need to recover to ~1.75% DD to resume
             # Force-close any open position to prevent further losses
             if self.position > 0:
+                logger.debug(f"Circuit breaker: DD={current_dd_pct:.2f}%, closing position")
                 reward = self._close_position(current_price, "drawdown_halt")
         
         # Check if we can resume trading (recovered from circuit breaker)
