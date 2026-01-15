@@ -413,6 +413,10 @@ async def run_autonomous(asset: str, wallet: str, cycle_hours: int = 1, skip_bac
     """
     Full autonomous mode: backtest → optimize → train → validate → live
     Loops hourly with automatic parameter adjustment
+    
+    Enhanced with:
+    - Model bias detection (>90% HOLD triggers retrain even with skip_backtest)
+    - Synthetic fallback awareness
     """
     from src.main import AMLHFTSystem
     
@@ -421,7 +425,7 @@ async def run_autonomous(asset: str, wallet: str, cycle_hours: int = 1, skip_bac
     log_info(f"   Cycle: Every {cycle_hours} hour(s)")
     log_info(f"   Timezone: Zurich CET")
     if skip_backtest:
-        log_info(f"   Skip Backtest: Enabled - going directly to live trading")
+        log_info(f"   Skip Backtest: Enabled (bias check still enforced)")
     
     cycle = 0
     running = True
@@ -443,12 +447,43 @@ async def run_autonomous(asset: str, wallet: str, cycle_hours: int = 1, skip_bac
         print(f"{Colors.BOLD}{Colors.BLUE}{'═' * 60}{Colors.RESET}\n")
         
         try:
+            # Initialize system for bias check
+            system = AMLHFTSystem()
+            await system.setup()
+            
+            # BIAS CHECK: Even with skip_backtest, check model bias before live trading
+            needs_retrain = False
+            if hasattr(system, '_ml_model') and system._ml_model:
+                bias_status = system._ml_model.check_bias_status()
+                if bias_status.get('needs_retrain'):
+                    log_warning(f"MODEL BIAS DETECTED: {bias_status.get('reason')}")
+                    log_warning(f"   Hold%: {bias_status.get('hold_pct', 0):.1%}, Severity: {bias_status.get('bias_severity')}")
+                    needs_retrain = True
+                elif bias_status.get('bias_severity') in ['high', 'moderate']:
+                    log_info(f"Model bias check: {bias_status.get('bias_severity')} ({bias_status.get('hold_pct', 0):.1%} HOLD)")
+            
             # Check if skipping backtest
-            if skip_backtest:
+            if skip_backtest and not needs_retrain:
                 log_info("Skipping backtest - proceeding to live trading")
                 objectives_met = True
+            elif skip_backtest and needs_retrain:
+                log_warning("Skip-backtest overridden due to model bias - forcing retrain")
+                objectives_met = False
+                
+                # Force retrain
+                log_phase(3, "Forced Retrain (bias detected)")
+                training_results = await run_training(days=180, epochs=200)
+                
+                # Reset bias flags
+                if hasattr(system, '_ml_model') and system._ml_model:
+                    system._ml_model.reset_bias_flags()
+                
+                # Validate after retrain
+                validation = await run_validation(days=30)
+                objectives_met = validation.get('objectives_met', False)
             else:
-                # Phase 1: Backtest with hybrid data
+                # Normal flow: Phase 1: Backtest with hybrid data
+                await system.shutdown()  # Close for backtest to reopen
                 backtest_results = await run_backtest(days=180, data_source="hybrid")
                 
                 objectives_met = backtest_results.get('objectives_met', False)
@@ -467,14 +502,15 @@ async def run_autonomous(asset: str, wallet: str, cycle_hours: int = 1, skip_bac
                     # Phase 4: Validate
                     validation = await run_validation(days=30)
                     objectives_met = validation.get('objectives_met', False)
+                    
+                # Reinitialize for live trading
+                system = AMLHFTSystem()
+                await system.setup()
             
             if objectives_met:
                 log_success("Objectives met! Starting live trading...")
                 
                 # Phase 5: Live trading (runs for cycle_hours)
-                system = AMLHFTSystem()
-                await system.setup()
-                
                 try:
                     await asyncio.wait_for(
                         system.run_live_trading(),

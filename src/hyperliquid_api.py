@@ -81,7 +81,14 @@ class Trade:
 
 
 class CircuitBreaker:
-    """Circuit breaker for rate limit protection (Step 5)"""
+    """
+    Circuit breaker for rate limit protection (Step 5)
+    
+    Enhanced with:
+    - Exponential backoff (5s → 10s → 20s → 60s → 120s → 300s max)
+    - Dynamic reset_timeout based on failure count
+    - Total failure tracking for synthetic fallback trigger
+    """
     
     def __init__(
         self,
@@ -90,29 +97,52 @@ class CircuitBreaker:
         half_open_timeout: float = 30.0
     ):
         self.max_failures = max_failures
-        self.reset_timeout = reset_timeout
+        self.base_reset_timeout = reset_timeout  # Base value
+        self.reset_timeout = reset_timeout  # Dynamic value
         self.half_open_timeout = half_open_timeout
         self.failure_count = 0
+        self.total_failures = 0  # Track total for synthetic fallback
         self.last_failure_time = 0.0
         self.state = "closed"  # closed, open, half_open
         self._lock = asyncio.Lock()
+        
+        # Exponential backoff settings
+        self.min_backoff = 5.0
+        self.max_backoff = 300.0  # 5 minutes max
+    
+    def get_dynamic_timeout(self) -> float:
+        """Calculate exponential backoff timeout: 5s → 10s → 20s → 60s → 120s → 300s"""
+        timeout = self.min_backoff * (2 ** min(self.failure_count - 1, 6))
+        return min(timeout, self.max_backoff)
     
     async def record_failure(self) -> None:
         async with self._lock:
             self.failure_count += 1
+            self.total_failures += 1
             self.last_failure_time = time.monotonic()
             
             if self.failure_count >= self.max_failures:
                 self.state = "open"
+                # Dynamic timeout based on failure count
+                self.reset_timeout = self.get_dynamic_timeout()
                 logger.warning(
-                    f"Circuit breaker OPEN: {self.failure_count} consecutive failures. "
-                    f"Pausing requests for {self.reset_timeout}s"
+                    f"Circuit breaker OPEN: {self.failure_count} failures (total: {self.total_failures}). "
+                    f"Exponential backoff: {self.reset_timeout:.0f}s"
                 )
     
     async def record_success(self) -> None:
         async with self._lock:
             self.failure_count = 0
+            self.reset_timeout = self.base_reset_timeout  # Reset to base
             self.state = "closed"
+    
+    def should_use_synthetic(self) -> bool:
+        """Return True if total failures indicate need for synthetic fallback"""
+        return self.total_failures >= 5
+    
+    def reset_total_failures(self) -> None:
+        """Reset total failure count (call after successful data fetch)"""
+        self.total_failures = 0
     
     async def can_proceed(self) -> bool:
         async with self._lock:
@@ -125,7 +155,7 @@ class CircuitBreaker:
             if self.state == "open":
                 if elapsed >= self.reset_timeout:
                     self.state = "half_open"
-                    logger.info("Circuit breaker HALF-OPEN: Allowing test request")
+                    logger.info(f"Circuit breaker HALF-OPEN: Testing after {self.reset_timeout:.0f}s backoff")
                     return True
                 return False
             
@@ -135,11 +165,11 @@ class CircuitBreaker:
             return True
     
     async def wait_if_needed(self) -> None:
-        """Wait until circuit allows requests"""
+        """Wait until circuit allows requests with progress logging"""
         while not await self.can_proceed():
             wait_time = max(1, self.reset_timeout - (time.monotonic() - self.last_failure_time))
-            logger.debug(f"Circuit breaker wait: {wait_time:.1f}s remaining")
-            await asyncio.sleep(min(wait_time, 5.0))
+            logger.info(f"Circuit breaker wait: {wait_time:.0f}s remaining (backoff: {self.reset_timeout:.0f}s)")
+            await asyncio.sleep(min(wait_time, 10.0))
 
 
 class RateLimiter:

@@ -2,35 +2,39 @@
     "asset": "XYZ100",
     "trading": {
         "take_profit_pct": 3.0,
-        "stop_loss_pct": 0.41416792890013415,
+        "stop_loss_pct": 0.40,
         "position_size_pct": 15.0,
         "leverage": 1,
-        "signal_threshold": 5e-05,
-        "min_q_diff": 0.0003,
+        "signal_threshold": 2e-05,
+        "min_q_diff": 0.0002,
         "max_portfolio_drawdown_pct": 4.5,
         "max_daily_trades": 50,
-        "min_trade_interval_seconds": 30
+        "min_trade_interval_seconds": 30,
+        "max_hold_signals_before_force": 50,
+        "force_trade_after_holds": true,
+        "force_trade_strength": 0.8
     },
     "ml_model": {
         "lstm_hidden_size": 128,
         "lstm_num_layers": 2,
-        "learning_rate": 5.246667844747977e-05,
-        "epochs": 500,
+        "learning_rate": 5e-05,
+        "epochs": 200,
         "epsilon_decay": 0.985,
         "epsilon_start": 1.0,
         "epsilon_min": 0.03,
-        "early_stop_patience": 150,
+        "early_stop_patience": 100,
         "min_reward_delta": 0.0005,
         "num_workers": 8,
-        "enable_torch_compile": false,
+        "enable_torch_compile": true,
         "data_days": 180,
-        "action_balance_penalty": 0.15,
-        "bias_threshold": 0.55,
+        "action_balance_penalty": 0.30,
+        "bias_threshold": 0.60,
         "lr_scheduler_factor": 0.5,
         "lr_scheduler_patience": 40,
         "lr_min": 5e-07,
         "gradient_clip_norm": 1.0,
-        "weight_decay": 1e-05
+        "weight_decay": 1e-05,
+        "diversity_thresh": 0.75
     },
     "backtest": {
         "commission_pct": 0.0005,
@@ -47,9 +51,10 @@
         "streak_bonus": 0.15,
         "drawdown_penalty": 0.25,
         "vol_scale_factor": 1.2,
-        "hold_penalty_base": 0.003,
-        "max_consecutive_holds": 20,
+        "hold_penalty_base": 0.01,
+        "max_consecutive_holds": 50,
         "win_multiplier": 1.5,
-        "trend_bonus": 0.05
+        "trend_bonus": 0.05,
+        "diversity_penalty": 0.30
     }
 }

@@ -104,6 +104,11 @@ class DataFetcher:
         self._last_xyz100_check = 0.0
         self._xyz100_check_interval = 3600  # Check hourly
         
+        # Synthetic fallback tracking
+        self._consecutive_fetch_failures = 0
+        self._synthetic_fallback_threshold = 5  # Switch to synthetic after 5 failures
+        self._using_synthetic = False
+        
         # SPX/S&P500 synthetic data parameters
         self.SPX_ANNUAL_VOL = 0.15  # ~15% annualized volatility for S&P500
         self.SPX_DRIFT = 0.0  # Drift-neutral for balanced training (prevents directional bias)
@@ -114,6 +119,81 @@ class DataFetcher:
         subdirs = ["historical", "backtests", "trading", "backups", "cache"]
         for subdir in subdirs:
             (self.data_dir / subdir).mkdir(parents=True, exist_ok=True)
+    
+    def record_fetch_success(self) -> None:
+        """Record successful data fetch - reset failure counters"""
+        self._consecutive_fetch_failures = 0
+        self._using_synthetic = False
+        # Also reset circuit breaker total failures if we have access
+        if hasattr(self.api, '_circuit_breaker'):
+            self.api._circuit_breaker.reset_total_failures()
+    
+    def record_fetch_failure(self) -> None:
+        """Record fetch failure - may trigger synthetic fallback"""
+        self._consecutive_fetch_failures += 1
+        if self._consecutive_fetch_failures >= self._synthetic_fallback_threshold:
+            if not self._using_synthetic:
+                logger.warning(
+                    f"SYNTHETIC FALLBACK: {self._consecutive_fetch_failures} consecutive fetch failures. "
+                    f"Switching to synthetic data for training/signals."
+                )
+                self._using_synthetic = True
+    
+    def should_use_synthetic(self) -> bool:
+        """Check if synthetic fallback should be used"""
+        # Check our counter or circuit breaker
+        if self._using_synthetic:
+            return True
+        if hasattr(self.api, '_circuit_breaker') and self.api._circuit_breaker.should_use_synthetic():
+            self._using_synthetic = True
+            logger.warning("SYNTHETIC FALLBACK: Circuit breaker triggered synthetic mode")
+            return True
+        return False
+    
+    async def get_data_with_fallback(self, days: int = 180) -> pd.DataFrame:
+        """
+        Get training data with automatic synthetic fallback on API failures.
+        
+        Order of preference:
+        1. XYZ100 live data (if available)
+        2. Wallet hybrid data (90% real fills + 10% synthetic)
+        3. Pure synthetic SPX data
+        
+        Returns DataFrame suitable for training.
+        """
+        if self.should_use_synthetic():
+            logger.info("Using synthetic data fallback due to API failures")
+            # Try wallet hybrid first (uses local data)
+            try:
+                wallet_data = await self.generate_wallet_hybrid_data(days=days)
+                if len(wallet_data) >= 1000:
+                    logger.info(f"Wallet hybrid fallback: {len(wallet_data)} records")
+                    return wallet_data
+            except Exception as e:
+                logger.warning(f"Wallet hybrid failed: {e}")
+            
+            # Pure synthetic as last resort
+            synthetic = self.generate_synthetic_spx(days=days)
+            logger.info(f"Pure synthetic fallback: {len(synthetic)} records")
+            return synthetic
+        
+        # Try normal fetch
+        try:
+            df = await self.fetch_historical_klines(
+                symbol=self.PRIMARY_SYMBOL,
+                interval="1m", 
+                days=days,
+                save=True
+            )
+            if len(df) >= 1000:
+                self.record_fetch_success()
+                return df
+        except Exception as e:
+            logger.error(f"Historical klines fetch failed: {e}")
+            self.record_fetch_failure()
+        
+        # Fallback on failure
+        return await self.get_data_with_fallback(days=days)
     
     async def check_xyz100_availability(self):
         """

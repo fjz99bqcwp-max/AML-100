@@ -1623,7 +1623,7 @@ class AMLHFTSystem:
             self._consecutive_holds += 1
             # Debug: Log consecutive count reaching threshold
             if self._consecutive_holds >= max_holds:
-                logger.info(f"  ⚡ Force trade check: consecutive={self._consecutive_holds}, enabled={force_trade_enabled}")
+                logger.info(f"  Force trade check: consecutive={self._consecutive_holds}, enabled={force_trade_enabled}")
             
             if force_trade_enabled and self._consecutive_holds >= max_holds:
                 # Force a trade based on momentum (no RSI)
@@ -2245,7 +2245,7 @@ class AMLHFTSystem:
         
         # Phase 1: Initial Backtest
         logger.info("=" * 60)
-        logger.info(f"🧪 Phase 1: Initial Backtest ({backtest_days} days)")
+        logger.info(f"Phase 1: Initial Backtest ({backtest_days} days)")
         logger.info("=" * 60)
         
         backtest_results = await self.run_backtest(days=backtest_days)

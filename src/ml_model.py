@@ -1114,35 +1114,51 @@ class MLModel:
         
         trade_count = int(action_counts[1] + action_counts[2])  # BUY + SELL
         
-        # REDUCED diversity penalties - let PnL drive behavior, not arbitrary action quotas
-        diversity_thresh = self.ml_config.get("diversity_thresh", 0.80)  # Allow 80% same action if profitable
-        
-        # Strong diversity penalty ONLY if model is completely stuck on one action (>90%)
+        # Track bias for retrain detection
         total_actions = len(actions)
         if total_actions > 10:
+            hold_pct = action_counts[self.HOLD] / total_actions
             max_action_pct = action_counts.max() / total_actions
             
-            # Only penalize extreme HOLD dominance (>90%) - HOLD is valid when uncertain
-            hold_pct = action_counts[self.HOLD] / total_actions
-            if hold_pct > 0.90:  # Very high threshold
-                hold_penalty = -self.reward_config.diversity_penalty * 5 * total_actions  # Reduced 12x -> 5x
+            # BIAS DETECTION: Track cumulative bias for retrain trigger
+            if not hasattr(self, '_bias_history'):
+                self._bias_history = []
+            self._bias_history.append({
+                'hold_pct': hold_pct,
+                'max_action_pct': max_action_pct,
+                'timestamp': time.time()
+            })
+            # Keep last 100 epochs
+            self._bias_history = self._bias_history[-100:]
+            
+            # STRONG diversity penalty for extreme HOLD dominance (>90%)
+            if hold_pct > 0.90:
+                # Increased penalty: -0.3 per action for extreme bias
+                hold_penalty = -0.30 * total_actions
                 rewards = rewards + (hold_penalty / len(rewards))
-                logger.warning(f"Extreme HOLD dominance: {hold_pct:.1%} HOLD")
+                logger.warning(f"EXTREME HOLD BIAS: {hold_pct:.1%} - penalty applied (-0.30/action)")
+                
+                # Set retrain flag
+                self._needs_retrain = True
+                self._retrain_reason = f"Extreme HOLD bias: {hold_pct:.1%}"
             
-            # Only penalize very extreme action bias (>90%)
+            # Moderate penalty for high bias (>80%)
+            elif hold_pct > 0.80:
+                hold_penalty = -0.15 * total_actions
+                rewards = rewards + (hold_penalty / len(rewards))
+                logger.warning(f"High HOLD bias: {hold_pct:.1%} - moderate penalty applied")
+            
+            # Penalty for any extreme action bias (>90%)
             if max_action_pct > 0.90:
-                diversity_penalty = -self.reward_config.diversity_penalty * 3 * total_actions  # Reduced 10x -> 3x
+                diversity_penalty = -0.20 * total_actions
                 rewards = rewards + (diversity_penalty / len(rewards))
-                logger.debug(f"Diversity penalty: {max_action_pct:.1%} same action")
-            
-            # REMOVED: Force minimum trading activity - let model learn when to trade
-            # REMOVED: BUY/SELL balance enforcement - model should follow market direction
+                logger.warning(f"Extreme action bias: {max_action_pct:.1%}")
         
-        # Mild penalty if no trades at all - but not severe
+        # Penalty if no trades at all
         if trade_count == 0 and total_actions > 20:
-            diversity_penalty = -self.reward_config.diversity_penalty * total_actions * 0.5  # Greatly reduced
+            diversity_penalty = -0.10 * total_actions
             rewards = rewards + (diversity_penalty / len(rewards))
-            logger.debug(f"No trades penalty (mild)")
+            logger.debug(f"No trades penalty applied")
         
         total_reward = rewards.sum()
         
@@ -2066,6 +2082,60 @@ class MLModel:
             batch_size = len(features_batch)
             return np.zeros(batch_size, dtype=int), np.zeros(batch_size), np.zeros((batch_size, 3))
     
+    def check_bias_status(self) -> Dict[str, Any]:
+        """
+        Check model bias status and return recommendations.
+        
+        Returns:
+            dict with keys:
+            - needs_retrain: bool - True if bias is severe enough to warrant retrain
+            - hold_pct: float - Percentage of HOLD actions in recent history
+            - bias_severity: str - "low", "moderate", "high", "extreme"
+            - reason: str - Explanation if retrain needed
+        """
+        result = {
+            'needs_retrain': getattr(self, '_needs_retrain', False),
+            'hold_pct': 0.0,
+            'bias_severity': 'low',
+            'reason': None
+        }
+        
+        # Check bias history if available
+        if hasattr(self, '_bias_history') and self._bias_history:
+            recent = self._bias_history[-10:]  # Last 10 epochs
+            avg_hold_pct = np.mean([b['hold_pct'] for b in recent])
+            avg_max_action = np.mean([b['max_action_pct'] for b in recent])
+            
+            result['hold_pct'] = avg_hold_pct
+            
+            if avg_hold_pct > 0.90:
+                result['bias_severity'] = 'extreme'
+                result['needs_retrain'] = True
+                result['reason'] = f"Extreme HOLD bias: {avg_hold_pct:.1%}"
+            elif avg_hold_pct > 0.80:
+                result['bias_severity'] = 'high'
+                result['reason'] = f"High HOLD bias: {avg_hold_pct:.1%}"
+            elif avg_hold_pct > 0.70:
+                result['bias_severity'] = 'moderate'
+            
+            if avg_max_action > 0.90 and not result['needs_retrain']:
+                result['bias_severity'] = 'extreme'
+                result['needs_retrain'] = True
+                result['reason'] = f"Extreme action bias: {avg_max_action:.1%}"
+        
+        # Check retrain flag
+        if hasattr(self, '_retrain_reason') and self._retrain_reason:
+            result['reason'] = self._retrain_reason
+        
+        return result
+    
+    def reset_bias_flags(self) -> None:
+        """Reset bias tracking after retrain"""
+        self._needs_retrain = False
+        self._retrain_reason = None
+        self._bias_history = []
+        logger.info("Bias tracking reset")
+
     async def quick_train(
         self,
         df: pd.DataFrame,
